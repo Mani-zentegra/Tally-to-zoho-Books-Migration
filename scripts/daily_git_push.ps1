@@ -12,15 +12,22 @@ try {
     $status = git status --porcelain
     if ($status) {
         Add-Content -Path $logFile -Value "[$timestamp] Changes detected. Staging modified and database files..."
-        git add -A 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+        $addOutput = cmd.exe /c "git add -A 2>&1"
+        if ($addOutput) { Add-Content -Path $logFile -Value $addOutput }
         
         $commitMsg = "chore: automated daily backup $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
-        git commit -m $commitMsg 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+        $commitOutput = cmd.exe /c "git commit -m `"$commitMsg`" 2>&1"
+        if ($commitOutput) { Add-Content -Path $logFile -Value $commitOutput }
         
         Add-Content -Path $logFile -Value "[$timestamp] Pushing to origin main..."
-        git push origin main 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+        $pushOutput = cmd.exe /c "git push origin main 2>&1"
+        if ($pushOutput) { Add-Content -Path $logFile -Value $pushOutput }
         
-        Add-Content -Path $logFile -Value "[$timestamp] Daily backup push completed successfully."
+        if ($LASTEXITCODE -eq 0) {
+            Add-Content -Path $logFile -Value "[$timestamp] Daily backup push completed successfully."
+        } else {
+            Add-Content -Path $logFile -Value "[$timestamp] Warning: git push returned exit code $LASTEXITCODE"
+        }
     } else {
         Add-Content -Path $logFile -Value "[$timestamp] No changes detected. Repository clean."
     }
