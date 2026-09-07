@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -8,6 +8,9 @@
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    
+    <!-- SheetJS (xlsx) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     
     {% include '_sidebar_styles.html' %}
     {% include '_zb_theme.html' %}
@@ -105,135 +108,219 @@
 
     <div class="container-fluid p-0">
         
-        <!-- HEADER & ACTIONS -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h4 class="fw-bold mb-1">Sales Invoices</h4>
-                <p class="text-muted small mb-0">View and sync sales invoices from Tally to Zoho Books</p>
-            </div>
-            <div class="d-flex gap-2">
-                <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success d-flex align-items-center" disabled>
-                    <i class="bi bi-check2-square me-2"></i> Insert Selected to Zoho
-                </button>
-                <button onclick="syncZoho()" class="btn btn-outline-primary d-flex align-items-center">
-                    <i class="bi bi-arrow-repeat me-2"></i> Sync All to Zoho
-                </button>
-                
-                <input type="file" id="jsonUpload" accept=".json" style="display: none;" onchange="uploadJson(event)">
-                <button onclick="document.getElementById('jsonUpload').click()" class="btn btn-outline-success d-flex align-items-center">
-                    <i class="bi bi-upload me-2"></i> Upload JSON
-                </button>
-<button onclick="fetchData()" class="btn btn-primary d-flex align-items-center">
-                    <i class="bi bi-cloud-download me-2"></i> Import Invoices
-                </button>
+    <div class="container-fluid p-0">
+        
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 1 — GET DATA (Import from Tally or Upload a file)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#5e35b1 !important;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#5e35b1;font-size:13px;">STEP 1</span>
+                    <span class="fw-semibold">Get Data</span>
+                    <span class="text-muted small">— Import invoices from Tally or upload a JSON file</span>
+                </div>
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">From Date</label>
+                        <input type="date" id="fromDate" class="form-control" value="2025-04-01" onchange="applyFilters()">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">To Date</label>
+                        <input type="date" id="toDate" class="form-control" value="2025-04-30" onchange="applyFilters()">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">Voucher Type Name</label>
+                        <input type="text" id="voucherTypeInput" class="form-control" value="Tax Invoice" placeholder="e.g. Tax Invoice">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small fw-bold">Limit</label>
+                        <input type="number" id="limitInput" class="form-control" placeholder="All">
+                    </div>
+                    <div class="col-md-2">
+                        <div class="form-check mb-1">
+                            <input class="form-check-input" type="checkbox" id="overwriteDbCheckbox">
+                            <label class="form-check-label small fw-bold text-danger" for="overwriteDbCheckbox" title="Clear existing DB invoices before saving newly imported ones">
+                                Overwrite DB
+                            </label>
+                        </div>
+                        <button onclick="fetchData()" class="btn btn-primary w-100">
+                            <i class="bi bi-cloud-download me-1"></i> Import Tally
+                        </button>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="file" id="jsonUpload" accept=".json" style="display:none" onchange="uploadJson(event)">
+                        <button onclick="document.getElementById('jsonUpload').click()" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-upload me-1"></i> Upload JSON
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- DATE RANGE SELECTOR -->
-        <div class="content-card mb-4 p-3">
-            <div class="row g-3 align-items-end">
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">Select Month</label>
-                    <select id="monthSelect" class="form-select" onchange="applyMonthFilter()">
-                        <option value="custom">Custom Range</option>
-                        <option value="2024-04">April 2024</option>
-                        <option value="2024-05">May 2024</option>
-                        <option value="2024-06">June 2024</option>
-                        <option value="2024-07">July 2024</option>
-                        <option value="2024-08">August 2024</option>
-                        <option value="2024-09">September 2024</option>
-                        <option value="2024-10">October 2024</option>
-                        <option value="2024-11">November 2024</option>
-                        <option value="2024-12">December 2024</option>
-                        <option value="2025-01">January 2025</option>
-                        <option value="2025-02">February 2025</option>
-                        <option value="2025-03">March 2025</option>
-                        <option value="2025-04" selected>April 2025</option>
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 2 — REVIEW (Filter by month, see totals)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#0288d1 !important;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#0288d1;font-size:13px;">STEP 2</span>
+                    <span class="fw-semibold">Review &amp; Filter</span>
+                    <span class="text-muted small">— Filter by month, check totals, select invoices</span>
+                    <span id="activeMonthBadge" class="badge bg-primary ms-2" style="display:none;"></span>
+                    <button onclick="openMonthlyReconciliationModal()" class="btn btn-sm btn-outline-primary fw-bold ms-auto" title="Check month-by-month total amount matching between Tally and Zoho Books">
+                        <i class="bi bi-bar-chart-steps me-1"></i> Monthly Amount Reconciliation
+                    </button>
+                </div>
+
+                <!-- Month Quick Filter Bar — Compact Year + Month Selector -->
+                <div class="d-flex align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border" id="monthPillsRow">
+                    <span class="text-muted small fw-bold text-nowrap ms-1"><i class="bi bi-calendar3 me-1"></i>Filter Month:</span>
+                    
+                    <select id="yearPillSelect" class="form-select form-select-sm border-secondary fw-semibold text-primary" style="width: auto; min-width: 120px;" onchange="onYearPillSelectChange(this.value)">
+                        <option value="ALL">All Years</option>
                     </select>
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">From Date</label>
-                    <input type="date" id="fromDate" class="form-control" value="2025-04-01">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">To Date</label>
-                    <input type="date" id="toDate" class="form-control" value="2025-04-30">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">Limit (optional)</label>
-                    <input type="number" id="limitInput" class="form-control" placeholder="All">
-                </div>
-                <div class="col-md-4 d-flex gap-2">
-                    <button onclick="fetchData()" class="btn btn-secondary w-100 d-flex align-items-center justify-content-center">
-                        <i class="bi bi-funnel me-2"></i> Apply Filter
-                    </button>
-                    <!-- Sync filtered directly feature -->
-                    <button onclick="syncFilteredMonth()" class="btn btn-success w-100 d-flex align-items-center justify-content-center">
-                        <i class="bi bi-cloud-upload me-2"></i> Sync Month
+
+                    <button id="allMonthsPillBtn" class="month-pill fw-bold flex-shrink-0" onclick="quickMonth('ALL')">ALL</button>
+
+                    <div id="monthPillsContainer" class="d-flex align-items-center gap-1 overflow-auto flex-grow-1 py-1" style="white-space: nowrap; scrollbar-width: thin;">
+                        <!-- Dynamic Month Pills inserted here -->
+                    </div>
+
+                    <button class="btn btn-sm btn-outline-secondary text-nowrap flex-shrink-0 ms-1" onclick="clearMonthFilter()">
+                        <i class="bi bi-x-circle me-1"></i>Clear
                     </button>
                 </div>
-            </div>
-        </div>
 
-        <!-- SELECTION INFO BAR -->
-        <div id="selectionBar" class="alert alert-success d-flex align-items-center justify-content-between py-2 px-3 mb-3" style="display:none !important; border-radius:10px;">
-            <span><i class="bi bi-check2-square me-2"></i><strong id="selectedCount">0</strong> invoice(s) selected</span>
-            <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-outline-success" onclick="selectAllVisible(true)">Select All Visible</button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="selectAllVisible(false)">Clear Selection</button>
-            </div>
-        </div>
-
-        <!-- KPI CARDS -->
-        <div class="row g-3 mb-4">
-            <div class="col-md-6">
-                <div class="kpi-card" style="border-color: #5e35b1;">
-                    <div class="kpi-label">Total Invoices</div>
-                    <div class="kpi-value" id="total-invoices">0</div>
+                <!-- KPI Cards -->
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#5e35b1">
+                            <div class="kpi-label">Total Invoices</div>
+                            <div class="kpi-value" id="total-invoices">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#43a047">
+                            <div class="kpi-label">Total Amount</div>
+                            <div class="kpi-value text-success" id="total-amount">₹0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#2e7d32">
+                            <div class="kpi-label"><i class="bi bi-check-circle me-1 text-success"></i>Synced to Zoho</div>
+                            <div class="kpi-value text-success" id="synced-count">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#ed6c02">
+                            <div class="kpi-label"><i class="bi bi-clock me-1 text-warning"></i>Pending Sync</div>
+                            <div class="kpi-value text-warning" id="pending-count">0</div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="col-md-6">
-                <div class="kpi-card" style="border-color: #43a047;">
-                    <div class="kpi-label">Total Amount</div>
-                    <div class="kpi-value text-success" id="total-amount">₹0</div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 3 — SYNC TO ZOHO
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#2e7d32 !important;">
+            <div class="p-3 d-flex align-items-center flex-wrap gap-3">
+                <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
+                <span class="fw-semibold">Sync to Zoho Books</span>
+                <div class="d-flex gap-2 ms-auto flex-wrap">
+                    <button onclick="refreshZohoMasters()" class="btn btn-outline-secondary" title="Cache all Zoho Masters (Contacts, Accounts, Taxes, Payment Terms, Tags) into SQLite DB to reduce API calls by >95%">
+                        <i class="bi bi-database-check me-1"></i> Refresh Masters Cache
+                    </button>
+                    <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success" disabled>
+                        <i class="bi bi-cloud-upload me-1"></i> Sync Selected
+                    </button>
+                    <button onclick="syncFilteredMonth()" id="syncMonthBtn" class="btn btn-outline-success">
+                        <i class="bi bi-calendar2-check me-1"></i> Sync Filtered Range
+                    </button>
+                    <button onclick="syncZoho()" class="btn btn-dark">
+                        <i class="bi bi-arrow-repeat me-1"></i> Sync All
+                    </button>
                 </div>
             </div>
         </div>
-      <!-- FIELD MAPPING: hidden file input -->
-      <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
 
+        <!-- LIVE CONSOLE (INVOICES SYNC) -->
+        <div id="invoicesSyncConsoleCard" class="content-card p-3 mb-4" style="display:none;">
+            <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+                <div class="fw-semibold text-dark">
+                    <i class="bi bi-terminal me-2"></i>Sync Console
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-secondary" id="invoicesSyncConsoleStatus">idle</span>
+                    <button id="invoicesSyncStopBtn" onclick="stopInvoicesSync()" class="btn btn-outline-danger btn-sm" disabled>
+                        <i class="bi bi-stop-circle me-1"></i> Stop
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="clearInvoicesSyncConsole()" title="Clear Console">
+                        <i class="bi bi-trash3 me-1"></i> Clear
+                    </button>
+                </div>
+            </div>
+            <pre id="invoicesSyncConsole" class="mb-0 p-3 rounded-3 bg-dark text-light small" style="max-height: 260px; overflow:auto; white-space: pre-wrap; font-family: SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></pre>
+        </div>
 
+        <!-- SELECTION STATUS BAR -->
+        <div id="selectionBar" class="alert alert-primary d-flex align-items-center justify-content-between py-2 px-3 mb-3 shadow-sm border" style="display:none; border-radius:10px;">
+            <span><i class="bi bi-check2-square me-2 text-primary fs-5"></i><strong id="selectedCount">0</strong> invoice(s) selected</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button class="btn btn-sm btn-success fw-semibold" onclick="markSelectedSynced('synced')" title="Mark selected invoices as Synced in Database">
+                    <i class="bi bi-check-circle-fill me-1"></i> Mark as Synced (Manual)
+                </button>
+                <button class="btn btn-sm btn-outline-secondary fw-semibold" onclick="markSelectedSynced('pending')" title="Mark selected invoices as Pending">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> Mark as Pending
+                </button>
+                <button class="btn btn-sm btn-primary" id="insertSelectedBtn" onclick="insertSelected()">
+                    <i class="bi bi-cloud-upload me-1"></i> Sync to Zoho API
+                </button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(true)">Select All</button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(false)">Clear</button>
+            </div>
+        </div>
 
-        <!-- CONTENT -->
+        <!-- FIELD MAPPING hidden input -->
+        <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
+
+        <!-- ═══════════════════════════════════════════════════════════
+             INVOICES TABLE
+        ════════════════════════════════════════════════════════════ -->
         <div class="content-card">
+            <!-- Table toolbar -->
             <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div class="input-group" style="max-width: 300px;">
-                    <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search invoices..." onkeyup="handleSearch()">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="input-group" style="max-width:280px;">
+                        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search invoice # or customer..." onkeyup="applyFilters()">
+                    </div>
+                    <div class="d-flex align-items-center gap-1">
+                        <span class="text-muted small fw-bold ms-2"><i class="bi bi-funnel me-1"></i>Sync Status:</span>
+                        <select id="zohoStatusFilter" class="form-select form-select-sm" style="width:140px;" onchange="applyFilters()">
+                            <option value="ALL">All Invoices</option>
+                            <option value="SYNCED">✓ Synced</option>
+                            <option value="PENDING">⏳ Pending</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
-                      onclick="document.getElementById('fmZohoFieldsInput').click()"
-                      title="Upload Zoho Books sample XLSX or CSV">
-                      <i class="bi bi-file-earmark-arrow-up"></i> Import Zoho Fields
+                <div class="d-flex align-items-center gap-2">
+                    <div id="filterStatus" class="text-muted small fw-semibold"></div>
+                    <button class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" onclick="downloadSyncErrorsExcel()" title="Download Failed Invoices Report with Full Zoho Import format">
+                        <i class="bi bi-exclamation-octagon-fill text-danger"></i> Download Error Excel
                     </button>
-                    <button id="fmMappingBtn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1"
-                      disabled onclick="fmOpenModal()" title="Map Tally DB fields to Zoho Books fields">
-                      <i class="bi bi-diagram-2"></i> Field Mapping
-                    </button>
-                    <button id="fmExportBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1"
-                      style="display:none" onclick="window.open('/api/field-mapping/' + FM_MODULE + '/export','_blank')">
-                      <i class="bi bi-cloud-upload"></i> Export for Zoho
+                    <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1" onclick="exportToExcel()" title="Export Invoices to Excel">
+                        <i class="bi bi-file-earmark-excel" style="color:#217346;"></i> Export Excel
                     </button>
                 </div>
             </div>
             <div id="fmStatusBar" class="px-3 py-1 small" style="display:none"></div>
-</div>
-            </div>
 
             <div class="table-responsive" style="max-height: 600px;">
                 <table class="table table-hover align-middle mb-0">
-                    <thead class="sticky-top">
+                    <thead class="sticky-top" style="background:#f8fafc;">
                         <tr>
                             <th style="width:40px;">
                                 <input type="checkbox" id="selectAllChk" class="form-check-input" title="Select / Deselect All" onchange="selectAllVisible(this.checked)">
@@ -242,6 +329,7 @@
                             <th>Date</th>
                             <th>Customer</th>
                             <th class="text-end">Amount</th>
+                            <th class="text-center">Zoho Sync Status</th>
                             <th class="text-center">Action</th>
                         </tr>
                     </thead>
@@ -249,7 +337,7 @@
                         <tr>
                             <td colspan="6" class="text-center py-5 text-muted">
                                 <i class="bi bi-receipt fs-1 mb-2"></i><br>
-                                Click "Import Invoices" to fetch data
+                                Click "Import Invoices" or select a filter
                             </td>
                         </tr>
                     </tbody>
@@ -272,6 +360,28 @@
             </div>
         </div>
     </div>
+
+    <!-- ZOHO SYNC REPORT MODAL (Invoices) -->
+    <div class="modal fade" id="syncReportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-bar-graph me-2"></i>Zoho Sync Report &mdash; Invoices</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4" id="syncReportBody"></div>
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger fw-bold" onclick="downloadSyncErrorsExcel()">
+                        <i class="bi bi-file-earmark-excel me-2"></i>Download Error Excel (.xlsx)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CUSTOM TOP NOTIFICATION TOAST CONTAINER -->
+    <div id="customToastContainer" style="position: fixed; top: 20px; right: 20px; z-index: 9999; max-width: 420px;"></div>
 
     <!-- SCRIPTS -->
         </div>
@@ -326,66 +436,262 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let allInvoices = [];
-        let stats = {};
+        let activeMonth = '';
+        let currentFilteredInvoices = [];
 
-        // Load data on startup - priority: localStorage (only if non-empty) -> DB -> empty
+        const MONTH_NAMES = {
+            '202404': 'April 2024', '202405': 'May 2024', '202406': 'June 2024',
+            '202407': 'July 2024', '202408': 'August 2024', '202409': 'September 2024',
+            '202410': 'October 2024', '202411': 'November 2024', '202412': 'December 2024',
+            '202501': 'January 2025', '202502': 'February 2025', '202503': 'March 2025',
+            '202504': 'April 2025', '202505': 'May 2025', '202506': 'June 2025',
+            '202507': 'July 2025', '202508': 'August 2025', '202509': 'September 2025',
+            '202510': 'October 2025', '202511': 'November 2025', '202512': 'December 2025',
+            '202601': 'January 2026', '202602': 'February 2026', '202603': 'March 2026'
+        };
+
+        // Load DB invoices on startup
         document.addEventListener('DOMContentLoaded', async () => {
-            const cached = localStorage.getItem('invoicesData');
-            if (cached) {
-                try {
-                    const data = JSON.parse(cached);
-                    const cachedInvoices = data.invoices || [];
-                    if (Array.isArray(cachedInvoices) && cachedInvoices.length > 0) {
-                        allInvoices = cachedInvoices;
-                        stats       = data.stats || {};
-                        updateKPIs(stats);
-                        renderInvoices(allInvoices);
-                        return;
-                    }
-                    localStorage.removeItem('invoicesData');
-                } catch(e) {
-                    localStorage.removeItem('invoicesData');
-                }
-            }
-
-            // localStorage empty — try the DB
             try {
                 const res  = await fetch('/api/db/invoices');
                 const data = await res.json();
                 if (data.invoices && data.invoices.length > 0) {
                     allInvoices = data.invoices;
-                    const totalAmount = allInvoices.reduce((s, inv) => s + (inv.total_amount || 0), 0);
-                    stats = {
-                        total_invoices: allInvoices.length,
-                        total_amount:   totalAmount
-                    };
-                    updateKPIs(stats);
-                    renderInvoices(allInvoices);
+                    activeMonth = 'ALL';
+                    buildMonthPills();
+                    updatePillUI();
+                    applyFilters();
                 }
             } catch(e) {
-                console.warn('DB load failed, Tally import needed:', e);
+                console.warn('DB load failed:', e);
             }
         });
 
-        function applyMonthFilter() {
-            const val = document.getElementById('monthSelect').value;
-            if (val === 'custom') return;
-            
-            const [year, month] = val.split('-');
-            // Get last day of month
-            const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-            
-            document.getElementById('fromDate').value = `${val}-01`;
-            document.getElementById('toDate').value = `${val}-${lastDay}`;
+        function quickMonth(ym) {
+            if (ym === 'ALL') {
+                activeMonth = 'ALL';
+                if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    document.getElementById('fromDate').value = `${selectedYearFilter}-01-01`;
+                    document.getElementById('toDate').value = `${selectedYearFilter}-12-31`;
+                }
+            } else {
+                activeMonth = (activeMonth === ym) ? 'ALL' : ym;
+                if (activeMonth && activeMonth !== 'ALL') {
+                    const year = activeMonth.slice(0, 4);
+                    const month = activeMonth.slice(4, 6);
+                    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+                    document.getElementById('fromDate').value = `${year}-${month}-01`;
+                    document.getElementById('toDate').value = `${year}-${month}-${lastDay < 10 ? '0' + lastDay : lastDay}`;
+                }
+            }
+            updatePillUI();
+            applyFilters();
+        }
+
+        function clearMonthFilter() {
+            activeMonth = 'ALL';
+            selectedYearFilter = 'ALL';
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) yearSelect.value = 'ALL';
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function updatePillUI() {
+            document.querySelectorAll('.month-pill').forEach(btn => {
+                const onclickStr = btn.getAttribute('onclick') || '';
+                const match = onclickStr.match(/'([^']+)'/);
+                const ym = match ? match[1] : '';
+                btn.classList.toggle('active', ym === activeMonth);
+            });
+
+            const allPillBtn = document.getElementById('allMonthsPillBtn');
+            if (allPillBtn) {
+                if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    allPillBtn.textContent = `ALL (${selectedYearFilter})`;
+                } else {
+                    allPillBtn.textContent = 'ALL';
+                }
+            }
+
+            const badge = document.getElementById('activeMonthBadge');
+            if (badge) {
+                if (activeMonth && activeMonth !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = MONTH_NAMES[activeMonth] || activeMonth;
+                } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = `Year ${selectedYearFilter} (All Months)`;
+                } else if (activeMonth === 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = 'ALL (All Months)';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        let allUniqueYears = [];
+        let allUniqueYmList = [];
+        let selectedYearFilter = 'ALL';
+
+        function onYearPillSelectChange(selectedYear) {
+            selectedYearFilter = selectedYear;
+            if (activeMonth !== 'ALL' && selectedYear !== 'ALL' && !activeMonth.startsWith(selectedYear)) {
+                activeMonth = 'ALL';
+            }
+            if (selectedYear !== 'ALL') {
+                document.getElementById('fromDate').value = `${selectedYear}-01-01`;
+                document.getElementById('toDate').value = `${selectedYear}-12-31`;
+            }
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function buildMonthPills() {
+            const ymSet = new Set();
+            const yearSet = new Set();
+
+            allInvoices.forEach(inv => {
+                const d = getNormalizedDate(inv.date);
+                if (d && d.length >= 6) {
+                    const ym = d.slice(0, 6);
+                    ymSet.add(ym);
+                    yearSet.add(d.slice(0, 4));
+                }
+            });
+
+            allUniqueYmList = Array.from(ymSet).sort();
+            allUniqueYears = Array.from(yearSet).sort();
+
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) {
+                const currentVal = yearSelect.value || selectedYearFilter;
+                yearSelect.innerHTML = '<option value="ALL">All Years (' + allUniqueYears.length + ')</option>';
+                allUniqueYears.forEach(y => {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = 'Year ' + y;
+                    yearSelect.appendChild(opt);
+                });
+                yearSelect.value = allUniqueYears.includes(currentVal) ? currentVal : 'ALL';
+                selectedYearFilter = yearSelect.value;
+            }
+
+            renderFilteredPills();
+        }
+
+        function renderFilteredPills() {
+            const container = document.getElementById('monthPillsContainer');
+            if (!container) return;
+
+            container.innerHTML = '';
+            const MONTH_SHORT = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            let filteredYms = allUniqueYmList;
+            if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                filteredYms = allUniqueYmList.filter(ym => ym.startsWith(selectedYearFilter));
+            }
+
+            filteredYms.forEach(ym => {
+                const year = ym.slice(0, 4);
+                const mon  = parseInt(ym.slice(4, 6));
+                const label = MONTH_SHORT[mon] + " '" + year.slice(2);
+                const btn = document.createElement('button');
+                btn.className = 'month-pill' + (ym === activeMonth ? ' active' : '');
+                btn.textContent = label;
+                btn.setAttribute('onclick', `quickMonth('${ym}')`);
+                container.appendChild(btn);
+            });
+        }
+
+        function getNormalizedDate(d) {
+            if (!d) return '';
+            return String(d).replace(/-/g, '').trim();
         }
 
         function formatDate(tallyDate) {
-            if (!tallyDate || tallyDate.length !== 8) return tallyDate;
-            return `${tallyDate.slice(6,8)}/${tallyDate.slice(4,6)}/${tallyDate.slice(0,4)}`;
+            if (!tallyDate) return '';
+            const d = getNormalizedDate(tallyDate);
+            if (d.length !== 8) return tallyDate;
+            return `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}`;
         }
 
         function formatDateForAPI(dateInput) {
             return dateInput.replace(/-/g, '');
+        }
+
+        function applyFilters() {
+            const q = document.getElementById('searchInput').value.toLowerCase().trim();
+            const fromDateStr = getNormalizedDate(document.getElementById('fromDate').value);
+            const toDateStr = getNormalizedDate(document.getElementById('toDate').value);
+            const vType = document.getElementById('voucherTypeInput').value.trim().toLowerCase();
+            const limitInput = document.getElementById('limitInput').value;
+            const limitVal = limitInput ? parseInt(limitInput) : null;
+            const statusFilter = document.getElementById('zohoStatusFilter')?.value || 'ALL';
+
+            let filtered = allInvoices.filter(inv => {
+                let match = true;
+                const invDate = getNormalizedDate(inv.date);
+                const isSynced = (inv.zoho_status === 'synced' || Boolean(inv.zoho_invoice_id));
+
+                if (statusFilter === 'SYNCED') {
+                    if (!isSynced) match = false;
+                } else if (statusFilter === 'PENDING') {
+                    if (isSynced) match = false;
+                }
+
+                if (match && activeMonth && activeMonth !== 'ALL') {
+                    if (!invDate.startsWith(activeMonth)) match = false;
+                } else if (match && selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    if (!invDate.startsWith(selectedYearFilter)) match = false;
+                } else if (match) {
+                    if (fromDateStr && invDate && invDate < fromDateStr) match = false;
+                    if (toDateStr && invDate && invDate > toDateStr) match = false;
+                }
+
+                if (match && vType && inv.voucher_type) {
+                    if (!inv.voucher_type.toLowerCase().includes(vType)) match = false;
+                }
+
+                if (match && q) {
+                    const invNo = (inv.invoice_number || '').toLowerCase();
+                    const custName = (inv.customer_name || '').toLowerCase();
+                    if (!invNo.includes(q) && !custName.includes(q)) match = false;
+                }
+
+                return match;
+            });
+
+            if (limitVal && limitVal > 0) {
+                filtered = filtered.slice(0, limitVal);
+            }
+
+            currentFilteredInvoices = filtered;
+
+            // Dynamically recalculate 4 KPI cards for the filtered set!
+            const totalAmount = filtered.reduce((s, inv) => s + (parseFloat(inv.total_amount) || 0), 0);
+            const syncedInvoices = filtered.filter(i => i.zoho_status === 'synced' || Boolean(i.zoho_invoice_id));
+            const pendingInvoices = filtered.filter(i => i.zoho_status !== 'synced' && !i.zoho_invoice_id);
+
+            document.getElementById('total-invoices').innerText = filtered.length.toLocaleString();
+            document.getElementById('total-amount').innerText = '₹' + totalAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('synced-count').innerText = syncedInvoices.length.toLocaleString();
+            document.getElementById('pending-count').innerText = pendingInvoices.length.toLocaleString();
+
+            const status = document.getElementById('filterStatus');
+            if (status) {
+                status.textContent = filtered.length !== allInvoices.length
+                    ? `Showing ${filtered.length} of ${allInvoices.length} invoices` : '';
+            }
+
+            renderInvoices(filtered);
+        }
+
+        function handleSearch() {
+            applyFilters();
         }
 
         async function fetchData() {
@@ -398,170 +704,395 @@
                 const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
                 const toDate = formatDateForAPI(document.getElementById('toDate').value);
                 const limit = document.getElementById('limitInput').value || null;
+                const voucherType = document.getElementById('voucherTypeInput').value.trim() || "Tax Invoice";
+                const overwrite = document.getElementById('overwriteDbCheckbox')?.checked || false;
 
                 const res = await fetch('/api/invoices/fetch', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ from_date: fromDate, to_date: toDate, limit: limit ? parseInt(limit) : null })
+                    body: JSON.stringify({ 
+                        from_date: fromDate, 
+                        to_date: toDate, 
+                        limit: limit ? parseInt(limit) : null,
+                        voucher_type: voucherType,
+                        overwrite: overwrite
+                    })
                 });
                 const data = await res.json();
                 
                 if (data.error) {
-                    alert('Error: ' + data.error);
+                    showCustomAlert('Error: ' + data.error, 'error');
                     return;
                 }
 
-                allInvoices = data.invoices;
-                stats = data.stats;
-                localStorage.setItem('invoicesData', JSON.stringify(data));
-                
-                updateKPIs(stats);
-                renderInvoices(allInvoices);
+                allInvoices = data.invoices || [];
+                activeMonth = 'ALL';
+                buildMonthPills();
+                updatePillUI();
+                applyFilters();
 
             } catch (err) {
                 console.error(err);
-                alert('Connection Error');
+                showCustomAlert('Connection Error', 'error');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalText;
+            }
+        }
+
+        async function exportToExcel() {
+            const dataToExport = (currentFilteredInvoices && currentFilteredInvoices.length > 0) ? currentFilteredInvoices : allInvoices;
+            if (!dataToExport || dataToExport.length === 0) {
+                showCustomAlert("No invoices available to export. Please fetch or load data first.", "info");
+                return;
+            }
+
+            showCustomAlert("Generating 180-column styled Zoho Books Excel export...", "info");
+
+            try {
+                const res = await fetch('/api/invoices/export_zoho_excel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ invoices: dataToExport })
+                });
+
+                if (!res.ok) {
+                    const errJson = await res.json();
+                    throw new Error(errJson.error || "Failed to generate Excel file");
+                }
+
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Zoho_Books_Formatted_Invoices_${new Date().toISOString().slice(0, 10)}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                showCustomAlert("Zoho Books Excel export downloaded successfully!", "success");
+            } catch (err) {
+                console.error("Export error:", err);
+                showCustomAlert("Export failed: " + err.message, "error");
             }
         }
 
         async function syncZoho() {
-            if (!confirm("This will sync the fetched invoices to Zoho Books. Continue?")) return;
-
-            const btn = document.querySelector('.btn-outline-primary');
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
-
-            try {
-                const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
-                const toDate = formatDateForAPI(document.getElementById('toDate').value);
-                const limit = document.getElementById('limitInput').value || null;
-
-                const res = await fetch('/api/invoices/sync_zoho', { 
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        invoices: null, 
-                        from_date: fromDate, 
-                        to_date: toDate,
-                        limit: limit ? parseInt(limit) : null
-                    })
-                });
-                const data = await res.json();
-                
-                if (data.status === 'success') {
-                    const total = data.stats.created + data.stats.failed;
-                    let msg = 'Zoho Sync Complete!\n\n';
-                    msg += `📊 Summary:\n`;
-                    msg += `  Total Invoices: ${total}\n`;
-                    msg += `  Created: ${data.stats.created}\n`;
-                    msg += `  Failed: ${data.stats.failed}\n\n`;
-                    
-                    if (data.stats.created > 0) {
-                        msg += `${data.stats.created} invoice(s) have been created in Zoho Books!\n\n`;
-                    }
-                    
-                    // Show detailed error messages
-                    if (data.stats.failed > 0 && data.stats.errors && data.stats.errors.length > 0) {
-                        msg += `Failed Invoices:\n`;
-                        msg += `${'='.repeat(50)}\n`;
-                        data.stats.errors.forEach((err, idx) => {
-                            msg += `${idx + 1}. Invoice: ${err.invoice_number}\n`;
-                            msg += `   Customer: ${err.customer}\n`;
-                            msg += `   Error: ${err.error}\n\n`;
-                        });
-                    }
-                    
-                    alert(msg);
-                } else {
-                    alert('Sync Error: ' + data.message);
-                }
-            } catch (err) {
-                console.error(err);
-                alert('Connection Error during Sync');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
-            }
+            if (!confirm("This will sync all invoices to Zoho Books. Continue?")) return;
+            await _pushInvoicesToZoho(allInvoices, 'syncZohoBtn');
         }
 
         async function syncFilteredMonth() {
-            if (!confirm("This will fetch invoices for the selected date range directly from Tally and sync them to Zoho Books. Continue?")) return;
+            if (!currentFilteredInvoices || currentFilteredInvoices.length === 0) {
+                showCustomAlert('No invoices found in the current filter range to sync.', 'info');
+                return;
+            }
+            const label = activeMonth ? (MONTH_NAMES[activeMonth] || activeMonth) : 'current filter';
+            if (!confirm(`Sync ${currentFilteredInvoices.length} invoice(s) for ${label} to Zoho Books?`)) return;
+
+            await _pushInvoicesToZoho(currentFilteredInvoices, 'syncMonthBtn');
+        }
+
+        async function insertSelected() {
+            const checked = document.querySelectorAll('.inv-chk:checked');
+            if (checked.length === 0) {
+                showCustomAlert('Please select at least one invoice first.', 'info');
+                return;
+            }
+
+            const selectedInvoices = Array.from(checked).map(chk => allInvoices[parseInt(chk.dataset.idx)]);
+            if (!confirm(`Sync ${selectedInvoices.length} selected invoice(s) to Zoho Books?`)) return;
+
+            await _pushInvoicesToZoho(selectedInvoices, 'insertSelectedBtn');
+        }
+
+        let lastSyncData = null;
+
+        function showCustomAlert(msg, type = 'info') {
+            const container = document.getElementById('customToastContainer');
+            if (!container) return;
             
-            const btn = document.querySelector('.btn-success.w-100');
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+            const toastId = 'toast_' + Date.now();
+            const bgClass = type === 'error' ? 'bg-danger text-white' : (type === 'success' ? 'bg-success text-white' : 'bg-dark text-white');
+            const icon = type === 'error' ? 'bi-exclamation-octagon-fill' : (type === 'success' ? 'bi-check-circle-fill' : 'bi-info-circle-fill');
+            
+            const toastHTML = `
+                <div id="${toastId}" class="toast align-items-center ${bgClass} border-0 show shadow-lg mb-2" role="alert" aria-live="assertive" aria-atomic="true">
+                  <div class="d-flex">
+                    <div class="toast-body d-flex align-items-center gap-2 fs-6">
+                      <i class="bi ${icon} fs-5"></i>
+                      <div>${String(msg).replace(/\n/g, '<br>')}</div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="document.getElementById('${toastId}').remove()"></button>
+                  </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', toastHTML);
+            setTimeout(() => {
+                const el = document.getElementById(toastId);
+                if (el) el.remove();
+            }, 6000);
+        }
 
+        function showSyncReportModal(data) {
+            lastSyncData = data;
+            const modalEl = document.getElementById('syncReportModal');
+            if (!modalEl) return;
+
+            const stats = data.stats || {};
+            const createdCount = stats.created || 0;
+            const failedCount  = stats.failed || 0;
+            const totalCount   = createdCount + failedCount;
+            const errors       = stats.errors || [];
+
+            const errRows = errors.map((e, i) =>
+                `<tr>
+                    <td class="fw-bold text-danger">#${e.invoice_number || '-'}</td>
+                    <td>${e.customer || '-'}</td>
+                    <td class="text-danger small">${e.error || '-'}</td>
+                </tr>`
+            ).join('');
+
+            document.getElementById('syncReportBody').innerHTML = `
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded text-center border">
+                            <div class="text-muted small">Total Processed</div>
+                            <div class="fs-4 fw-bold text-dark">${totalCount}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-success-subtle rounded text-center border border-success">
+                            <div class="text-success small fw-bold"><i class="bi bi-check-circle me-1"></i>Successfully Synced</div>
+                            <div class="fs-4 fw-bold text-success">${createdCount}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-danger-subtle rounded text-center border border-danger">
+                            <div class="text-danger small fw-bold"><i class="bi bi-exclamation-octagon me-1"></i>Failed Invoices</div>
+                            <div class="fs-4 fw-bold text-danger">${failedCount}</div>
+                        </div>
+                    </div>
+                </div>
+
+                ${failedCount > 0 ? `
+                    <div class="mb-3">
+                        <h6 class="text-danger border-bottom pb-2 fw-bold"><i class="bi bi-x-circle-fill me-2"></i>Failed Invoices &amp; Error Reasons</h6>
+                        <div class="table-responsive" style="max-height: 300px;">
+                            <table class="table table-sm table-hover border align-middle mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Invoice #</th>
+                                        <th>Customer</th>
+                                        <th>Error Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${errRows}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="alert alert-success text-center my-3 border-0 rounded-3">
+                        <i class="bi bi-check-circle-fill fs-2 d-block mb-2 text-success"></i>
+                        <strong class="fs-5">All ${createdCount} invoice(s) synced successfully to Zoho Books!</strong>
+                    </div>
+                `}
+            `;
+
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+
+        let activeInvoicesJobId = null;
+        let invoicesEs = null;
+
+        function clearInvoicesSyncConsole() {
+            const el = document.getElementById('invoicesSyncConsole');
+            if (el) el.textContent = '';
+        }
+
+        async function stopInvoicesSync() {
+            if (!activeInvoicesJobId) return;
             try {
-                const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
-                const toDate = formatDateForAPI(document.getElementById('toDate').value);
-                const limit = document.getElementById('limitInput').value || null;
-
-                const res = await fetch('/api/invoices/sync_zoho', { 
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        invoices: null, 
-                        from_date: fromDate, 
-                        to_date: toDate,
-                        limit: limit ? parseInt(limit) : null
-                    })
-                });
-                const data = await res.json();
-                
-                if (data.status === 'success') {
-                    const total = data.stats.created + data.stats.failed;
-                    let msg = 'Month Sync Complete!\n\n';
-                    msg += `📊 Summary:\n`;
-                    msg += `  Total Invoices Processed: ${total}\n`;
-                    msg += `  Created: ${data.stats.created}\n`;
-                    msg += `  Failed: ${data.stats.failed}\n\n`;
-                    
-                    if (data.stats.failed > 0 && data.stats.errors && data.stats.errors.length > 0) {
-                        msg += `Failed Invoices:\n`;
-                        msg += `${'='.repeat(50)}\n`;
-                        data.stats.errors.forEach((err, idx) => {
-                            msg += `${idx + 1}. Invoice: ${err.invoice_number}\n`;
-                            msg += `   Customer: ${err.customer}\n`;
-                            msg += `   Error: ${err.error}\n\n`;
-                        });
-                    }
-                    alert(msg);
-                } else {
-                    alert('Sync Error: ' + data.message);
-                }
-            } catch (err) {
-                console.error(err);
-                alert('Connection Error during Month Sync');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
+                await fetch(`/api/jobs/${activeInvoicesJobId}/stop`, { method: 'POST' });
+            } catch (e) {
+                console.error("Stop job error:", e);
             }
         }
 
-        function updateKPIs(stats) {
-            if (!stats) return;
-            document.getElementById('total-invoices').innerText = stats.total_invoices || 0;
-            document.getElementById('total-amount').innerText = '₹' + (stats.total_amount || 0).toLocaleString();
+        async function _pushInvoicesToZoho(invoicesToSync, btnId) {
+            const card = document.getElementById('invoicesSyncConsoleCard');
+            const consoleEl = document.getElementById('invoicesSyncConsole');
+            const statusEl = document.getElementById('invoicesSyncConsoleStatus');
+            const stopBtn = document.getElementById('invoicesSyncStopBtn');
+
+            if (card) card.style.display = 'block';
+            if (consoleEl) consoleEl.textContent = 'Starting Invoices Sync...\n';
+            if (statusEl) {
+                statusEl.textContent = 'running';
+                statusEl.className = 'badge bg-warning text-dark';
+            }
+            if (stopBtn) stopBtn.disabled = false;
+
+            const btn = btnId ? document.getElementById(btnId) : null;
+            let originalHTML = '';
+            if (btn) {
+                originalHTML = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+            }
+
+            try {
+                const res = await fetch('/api/invoices/sync_zoho/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ invoices: invoicesToSync })
+                });
+
+                const data = await res.json();
+                if (!res.ok || data.status !== 'success') {
+                    throw new Error(data.message || 'Failed to start invoices sync job');
+                }
+
+                activeInvoicesJobId = data.job_id;
+                await _streamInvoicesJobConsole(activeInvoicesJobId);
+
+            } catch (err) {
+                console.error("Sync Error:", err);
+                if (consoleEl) consoleEl.textContent += `\nError: ${err.message}\n`;
+                if (statusEl) {
+                    statusEl.textContent = 'failed';
+                    statusEl.className = 'badge bg-danger';
+                }
+                showCustomAlert('Sync Failed: ' + err.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHTML;
+                }
+                if (stopBtn) stopBtn.disabled = true;
+                updateSelectionUI();
+            }
+        }
+
+        function _streamInvoicesJobConsole(jobId) {
+            return new Promise((resolve) => {
+                const consoleEl = document.getElementById('invoicesSyncConsole');
+                const statusEl = document.getElementById('invoicesSyncConsoleStatus');
+
+                if (invoicesEs) invoicesEs.close();
+
+                invoicesEs = new EventSource(`/api/jobs/${jobId}/stream`);
+
+                invoicesEs.addEventListener('log', (ev) => {
+                    try {
+                        const d = JSON.parse(ev.data || '{}');
+                        if (d.message && consoleEl) {
+                            consoleEl.textContent += d.message + '\n';
+                            consoleEl.scrollTop = consoleEl.scrollHeight;
+                        }
+                    } catch (e) {
+                        console.error("Error parsing log event:", e);
+                    }
+                });
+
+                invoicesEs.addEventListener('done', (ev) => {
+                    let data = {};
+                    try { data = JSON.parse(ev.data || '{}'); } catch (e) {}
+                    const job = data.job || {};
+                    const result = data.result || {};
+
+                    if (invoicesEs) {
+                        try { invoicesEs.close(); } catch (e) {}
+                        invoicesEs = null;
+                    }
+                    activeInvoicesJobId = null;
+
+                    if (statusEl) {
+                        statusEl.textContent = job.status || 'done';
+                        statusEl.className = (job.status === 'success') ? 'badge bg-success' : 'badge bg-secondary';
+                    }
+
+                    if (result && result.stats) {
+                        showSyncReportModal(result);
+                        selectAllVisible(false);
+                    }
+                    resolve();
+                });
+
+                invoicesEs.onerror = () => {
+                    if (invoicesEs) invoicesEs.close();
+                    invoicesEs = null;
+                    activeInvoicesJobId = null;
+                    resolve();
+                };
+            });
+        }
+
+        async function downloadSyncErrorsExcel() {
+            try {
+                const errors = (lastSyncData && lastSyncData.stats && lastSyncData.stats.errors && lastSyncData.stats.errors.length > 0) 
+                    ? lastSyncData.stats.errors 
+                    : [];
+                
+                const res = await fetch('/api/invoices/export_sync_errors_excel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ errors: errors })
+                });
+                
+                if (!res.ok) {
+                    const errData = await res.json();
+                    alert(`Download Error: ${errData.error || 'Failed to generate invoice error Excel report'}`);
+                    return;
+                }
+
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Invoices_Sync_Error_Report_${new Date().toISOString().slice(0,10)}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                alert(`Error downloading error report: ${e.message}`);
+            }
+        }
+
+        function downloadSyncReportExcel() {
+            downloadSyncErrorsExcel();
         }
 
         function renderInvoices(invoices) {
             const tbody = document.getElementById('tableBody');
             if (!invoices || invoices.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No Invoices Found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">No Invoices Found</td></tr>';
                 updateSelectionUI();
                 return;
             }
 
-            tbody.innerHTML = invoices.map((inv, idx) => {
-                // find the real index in allInvoices so checkbox tracks the right record
+            tbody.innerHTML = invoices.map((inv) => {
                 const realIdx = allInvoices.indexOf(inv);
+                const amt = parseFloat(inv.total_amount) || 0;
+                const isSynced = (inv.zoho_status === 'synced' || Boolean(inv.zoho_invoice_id));
+                const statusBadge = isSynced
+                    ? `<button class="btn btn-sm btn-outline-success py-1 px-2 fw-semibold d-inline-flex align-items-center gap-1" style="font-size:0.78rem;" 
+                               title="Marked as Synced. Click to revert to Pending." 
+                               onclick="event.stopPropagation(); toggleManualSync('${inv.invoice_number}', 'pending')">
+                           <i class="bi bi-check-circle-fill text-success"></i> Synced
+                       </button>`
+                    : `<button class="btn btn-sm btn-outline-secondary py-1 px-2 fw-semibold d-inline-flex align-items-center gap-1" style="font-size:0.78rem;" 
+                               title="Pending. Click to Mark as Synced (Manual)." 
+                               onclick="event.stopPropagation(); toggleManualSync('${inv.invoice_number}', 'synced')">
+                           <i class="bi bi-circle text-muted"></i> Mark Synced
+                       </button>`;
+
                 return `
-                <tr style="cursor: pointer;" onclick="showInvoiceDetails(${realIdx})">
+                <tr style="cursor: pointer;" onclick="showInvoiceDetails('${inv.invoice_number}')">
                     <td onclick="event.stopPropagation()">
                         <input type="checkbox" class="form-check-input inv-chk" data-idx="${realIdx}"
                             onchange="updateSelectionUI()">
@@ -569,9 +1100,10 @@
                     <td class="fw-medium text-primary">${inv.invoice_number}</td>
                     <td>${formatDate(inv.date)}</td>
                     <td>${inv.customer_name}</td>
-                    <td class="text-end fw-bold text-success">₹${inv.total_amount.toLocaleString()}</td>
+                    <td class="text-end fw-bold text-success">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                    <td class="text-center">${statusBadge}</td>
                     <td class="text-center">
-                        <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showInvoiceDetails(${realIdx})">
+                        <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showInvoiceDetails('${inv.invoice_number}')">
                             <i class="bi bi-eye"></i> View
                         </button>
                     </td>
@@ -580,21 +1112,95 @@
             updateSelectionUI();
         }
 
-        /* ---------- selection helpers ---------- */
+        async function toggleManualSync(invoiceNumber, targetStatus) {
+            try {
+                const res = await fetch('/api/invoices/mark_synced', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        invoice_numbers: [invoiceNumber],
+                        status: targetStatus
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const found = allInvoices.find(i => i.invoice_number === invoiceNumber);
+                    if (found) {
+                        found.zoho_status = targetStatus;
+                        found.zoho_invoice_id = targetStatus === 'synced' ? 'MANUALLY_SYNCED' : null;
+                    }
+                    applyFilters();
+                } else {
+                    alert(data.error || 'Failed to update status.');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Network error while updating sync status.');
+            }
+        }
+
+        async function markSelectedSynced(targetStatus) {
+            const checked = document.querySelectorAll('.inv-chk:checked');
+            if (checked.length === 0) {
+                alert('Please select at least one invoice.');
+                return;
+            }
+            const invNumbers = Array.from(checked).map(chk => {
+                const idx = parseInt(chk.dataset.idx);
+                return allInvoices[idx]?.invoice_number;
+            }).filter(Boolean);
+
+            if (!confirm(`Are you sure you want to mark ${invNumbers.length} invoice(s) as ${targetStatus.toUpperCase()}?`)) {
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/invoices/mark_synced', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        invoice_numbers: invNumbers,
+                        status: targetStatus
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    invNumbers.forEach(num => {
+                        const found = allInvoices.find(i => i.invoice_number === num);
+                        if (found) {
+                            found.zoho_status = targetStatus;
+                            found.zoho_invoice_id = targetStatus === 'synced' ? 'MANUALLY_SYNCED' : null;
+                        }
+                    });
+                    applyFilters();
+                    selectAllVisible(false);
+                    alert(`Successfully marked ${data.count} invoice(s) as ${targetStatus}.`);
+                } else {
+                    alert(data.error || 'Failed to update selected invoices.');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Network error while marking selected invoices.');
+            }
+        }
+
         function updateSelectionUI() {
             const checked = document.querySelectorAll('.inv-chk:checked');
             const count = checked.length;
             const bar = document.getElementById('selectionBar');
             const btn = document.getElementById('insertSelectedBtn');
+            const countEl = document.getElementById('selectedCount');
             const allChk = document.getElementById('selectAllChk');
             const all = document.querySelectorAll('.inv-chk');
 
-            bar.style.display = count > 0 ? 'flex' : 'none';
-            document.getElementById('selectedCount').innerText = count;
-            btn.disabled = count === 0;
-            btn.innerHTML = count > 0
-                ? `<i class="bi bi-check2-square me-2"></i> Insert ${count} Selected to Zoho`
-                : '<i class="bi bi-check2-square me-2"></i> Insert Selected to Zoho';
+            if (bar) bar.style.display = count > 0 ? 'flex' : 'none';
+            if (countEl) countEl.innerText = count;
+            if (btn) {
+                btn.disabled = count === 0;
+                btn.innerHTML = count > 0
+                    ? `<i class="bi bi-cloud-upload me-1"></i> Sync (${count}) Selected`
+                    : '<i class="bi bi-cloud-upload me-1"></i> Sync Selected';
+            }
 
             if (allChk) {
                 allChk.checked = all.length > 0 && count === all.length;
@@ -609,8 +1215,10 @@
             updateSelectionUI();
         }
 
-        function showInvoiceDetails(idx) {
-            const inv = allInvoices[idx];
+        function showInvoiceDetails(invNo) {
+            const inv = allInvoices.find(i => i.invoice_number === invNo) || 
+                        (typeof invNo === 'number' ? allInvoices[invNo] : null);
+            if (!inv) return;
             const modal = new bootstrap.Modal(document.getElementById('invoiceModal'));
             
             let html = `
@@ -692,13 +1300,41 @@
                                 <tr>
                                     <td>${tax.tax_name}</td>
                                     <td><span class="badge bg-info">${tax.tax_type}</span></td>
-                                    <td class="text-end">${tax.tax_rate ? tax.tax_rate + '%' : 'N/A'}</td>
-                                    <td class="text-end">₹${tax.tax_amount.toLocaleString()}</td>
+                                    <td class="text-end">${tax.tax_rate ? tax.tax_rate + '%' : (inv.subtotal > 0 && tax.tax_amount > 0 ? ((tax.tax_amount / inv.subtotal) * 100).toFixed(1) + '%' : 'N/A')}</td>
+                                    <td class="text-end">₹${parseFloat(tax.tax_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                                 </tr>
                             `).join('')}
                             <tr class="table-light">
                                 <td colspan="3" class="text-end fw-bold">Tax Total:</td>
-                                <td class="text-end fw-bold">₹${inv.tax_total.toLocaleString()}</td>
+                                <td class="text-end fw-bold">₹${parseFloat(inv.tax_total || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                ` : ''}
+
+                ${inv.tds_amount && parseFloat(inv.tds_amount) > 0 ? `
+                <h6 class="text-danger border-bottom pb-2 mt-3"><i class="bi bi-shield-minus me-1"></i>TDS Deduction Breakdown (Tax Deducted at Source)</h6>
+                <div class="alert alert-warning py-2 mb-2" style="font-size: 13px;">
+                    <i class="bi bi-info-circle-fill me-1 text-danger"></i>
+                    <strong>Difference Reason:</strong> This invoice has TDS deducted in Tally (<strong>₹${parseFloat(inv.tds_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</strong>). In Tally, the net receivable amount is reduced by TDS, whereas in standard GST/VAT invoicing, Subtotal + Tax = ₹${(parseFloat(inv.subtotal || 0) + parseFloat(inv.tax_total || 0)).toLocaleString('en-IN', {minimumFractionDigits: 2})}.
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered">
+                        <thead class="table-light">
+                            <tr>
+                                <th>TDS Ledger Name</th>
+                                <th>Type</th>
+                                <th class="text-end">TDS Rate</th>
+                                <th class="text-end">TDS Deducted Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="table-danger">
+                                <td class="fw-bold text-danger">${inv.tds_ledger || 'TDS'}</td>
+                                <td><span class="badge bg-danger">TDS Deducted</span></td>
+                                <td class="text-end">${inv.tds_rate ? inv.tds_rate + '%' : (inv.subtotal > 0 ? ((parseFloat(inv.tds_amount) / parseFloat(inv.subtotal)) * 100).toFixed(1) + '%' : '-')}</td>
+                                <td class="text-end fw-bold text-danger">(-) ₹${parseFloat(inv.tds_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -716,10 +1352,13 @@
                         <div class="card bg-light">
                             <div class="card-body">
                                 <table class="table table-sm mb-0">
-                                    <tr><th>Subtotal:</th><td class="text-end">₹${inv.subtotal.toLocaleString()}</td></tr>
-                                    <tr><th>Tax Total:</th><td class="text-end">₹${inv.tax_total.toLocaleString()}</td></tr>
-                                    <tr><th>Rounding Off:</th><td class="text-end">₹${inv.rounding_off.toLocaleString()}</td></tr>
-                                    <tr class="table-primary"><th class="fs-5">Grand Total:</th><td class="text-end fs-5 fw-bold">₹${inv.total_amount.toLocaleString()}</td></tr>
+                                    <tr><th>Subtotal:</th><td class="text-end">₹${parseFloat(inv.subtotal || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td></tr>
+                                    <tr><th>Tax Total:</th><td class="text-end">₹${parseFloat(inv.tax_total || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td></tr>
+                                    ${inv.tds_amount && parseFloat(inv.tds_amount) > 0 ? `
+                                    <tr class="text-danger"><th>TDS Deducted:</th><td class="text-end fw-bold">(-) ₹${parseFloat(inv.tds_amount).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td></tr>
+                                    ` : ''}
+                                    <tr><th>Rounding Off:</th><td class="text-end">₹${parseFloat(inv.rounding_off || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td></tr>
+                                    <tr class="table-primary"><th class="fs-5">Grand Total:</th><td class="text-end fs-5 fw-bold">₹${parseFloat(inv.total_amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td></tr>
                                 </table>
                             </div>
                         </div>
@@ -733,71 +1372,50 @@
 
         function handleSearch() {
             const q = document.getElementById('searchInput').value.toLowerCase();
-            const filtered = allInvoices.filter(inv => 
-                inv.invoice_number.toLowerCase().includes(q) ||
-                inv.customer_name.toLowerCase().includes(q)
-            );
+            
+            // Format dates to YYYYMMDD for comparison if they exist
+            const fromDateStr = document.getElementById('fromDate').value.replace(/-/g, '');
+            const toDateStr = document.getElementById('toDate').value.replace(/-/g, '');
+            const vType = document.getElementById('voucherTypeInput').value.trim().toLowerCase();
+            const limit = parseInt(document.getElementById('limitInput').value);
+
+            let filtered = allInvoices.filter(inv => {
+                let match = true;
+                
+                if (q && !(inv.invoice_number.toLowerCase().includes(q) || inv.customer_name.toLowerCase().includes(q))) {
+                    match = false;
+                }
+                
+                if (match && fromDateStr && inv.date && inv.date < fromDateStr) match = false;
+                if (match && toDateStr && inv.date && inv.date > toDateStr) match = false;
+                
+                if (match && vType && inv.voucher_type) {
+                    if (!inv.voucher_type.toLowerCase().includes(vType)) match = false;
+                }
+                
+                return match;
+            });
+            
+            if (limit && limit > 0) {
+                filtered = filtered.slice(0, limit);
+            }
+            
             renderInvoices(filtered);
         }
 
-        /* ---------- Insert only the selected invoices ---------- */
-        async function insertSelected() {
-            const checked = document.querySelectorAll('.inv-chk:checked');
-            if (checked.length === 0) {
-                alert('Please select at least one invoice first.');
-                return;
-            }
 
-            const selectedInvoices = Array.from(checked).map(chk => allInvoices[parseInt(chk.dataset.idx)]);
-
-            if (!confirm(`Insert ${selectedInvoices.length} selected invoice(s) to Zoho Books?`)) return;
-
-            const btn = document.getElementById('insertSelectedBtn');
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Inserting...';
-
-            try {
-                const res = await fetch('/api/invoices/sync_zoho', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ invoices: selectedInvoices })
-                });
-                const data = await res.json();
-
-                if (data.status === 'success') {
-                    const total = data.stats.created + data.stats.failed;
-                    let msg = 'Insert Complete!\n\n';
-                    msg += `📊 Summary:\n`;
-                    msg += `  Total Selected: ${total}\n`;
-                    msg += `  Created: ${data.stats.created}\n`;
-                    msg += `  Failed: ${data.stats.failed}\n\n`;
-
-                    if (data.stats.failed > 0 && data.stats.errors && data.stats.errors.length > 0) {
-                        msg += `Failed Invoices:\n`;
-                        msg += `${'='.repeat(50)}\n`;
-                        data.stats.errors.forEach((err, idx) => {
-                            msg += `${idx + 1}. Invoice: ${err.invoice_number}\n`;
-                            msg += `   Customer: ${err.customer}\n`;
-                            msg += `   Error: ${err.error}\n\n`;
-                        });
-                    }
-                    alert(msg);
-                    // Uncheck all after insert
-                    selectAllVisible(false);
-                } else {
-                    alert('Insert Error: ' + data.message);
-                }
-            } catch (err) {
-                console.error(err);
-                alert('Connection Error during Insert');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
-                updateSelectionUI();
-            }
-        }
     
+        function updateKPIs(stats) {
+            const count = stats && stats.total_invoices !== undefined ? stats.total_invoices : allInvoices.length;
+            const amt = stats && stats.total_amount !== undefined ? stats.total_amount : allInvoices.reduce((s, inv) => s + (parseFloat(inv.total_amount || inv.amount) || 0), 0);
+            
+            const countEl = document.getElementById('total-invoices');
+            const amtEl = document.getElementById('total-amount');
+            
+            if (countEl) countEl.innerText = count.toLocaleString();
+            if (amtEl) amtEl.innerText = '₹' + amt.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+
         // Upload JSON Function
         async function uploadJson(event) {
             const file = event.target.files[0];
@@ -806,33 +1424,45 @@
             const formData = new FormData();
             formData.append('file', file);
 
-            const uploadBtn = event.target.nextElementSibling || document.querySelector('button[onclick="document.getElementById(\'jsonUpload\').click()"]');
-            const originalText = uploadBtn.innerHTML;
-            uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading...';
-            uploadBtn.disabled = true;
+            const uploadBtn = document.querySelector('button[onclick*="jsonUpload"]');
+            const originalText = uploadBtn ? uploadBtn.innerHTML : 'Upload JSON';
+            if (uploadBtn) {
+                uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Uploading...';
+                uploadBtn.disabled = true;
+            }
 
             try {
-                const response = await fetch('/api/invoice/upload', {
+                const response = await fetch('/api/invoices/upload', {
                     method: 'POST',
                     body: formData
                 });
                 const result = await response.json();
 
-                if (response.ok) {
-                    allInvoices = result.data || result.invoices || result.bills || result.receipts || result.sales_orders || result.purchase_orders || result.journals || [];
-                    localStorage.setItem('allInvoices', JSON.stringify(allInvoices));
-                    alert(result.message || 'JSON uploaded successfully!');
-                    renderInvoices();
+                if (response.ok && result.invoices && result.invoices.length > 0) {
+                    activeMonth = 'ALL';
+                    const activeBadge = document.getElementById('activeMonthBadge');
+                    if (activeBadge) activeBadge.style.display = 'none';
+                    document.querySelectorAll('.month-pill').forEach(btn => btn.classList.remove('active'));
+                    const allPill = document.querySelector('.month-pill[onclick*="ALL"]');
+                    if (allPill) allPill.classList.add('active');
+
+                    allInvoices = result.invoices;
+                    applyFilters();
+                    showCustomAlert(result.message || `Successfully loaded ${allInvoices.length} invoices!`, 'success');
+                } else if (response.ok && (!result.invoices || result.invoices.length === 0)) {
+                    showCustomAlert('No invoice records found in the uploaded JSON file.', 'info');
                 } else {
-                    alert('Error uploading JSON: ' + (result.error || 'Unknown error'));
+                    showCustomAlert('Error uploading JSON: ' + (result.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert('Failed to upload JSON file. See console for details.');
+                showCustomAlert('Failed to upload JSON file: ' + error.message, 'error');
             } finally {
-                uploadBtn.innerHTML = originalText;
-                uploadBtn.disabled = false;
-                event.target.value = ''; // Reset file input
+                if (uploadBtn) {
+                    uploadBtn.innerHTML = originalText;
+                    uploadBtn.disabled = false;
+                }
+                event.target.value = ''; // Reset file input so user can re-select
             }
         }
         
@@ -1006,6 +1636,954 @@
         } catch(e) {}
       })();
 
+      async function refreshZohoMasters() {
+        const btn = event.target.closest('button');
+        const origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Caching Masters...';
+
+        try {
+          const res = await fetch('/api/zoho/refresh_masters', { method: 'POST' });
+          const data = await res.json();
+          if (data.status === 'success') {
+            const d = data.details || {};
+            alert('✅ Zoho Masters Cached to Database!\n\n' +
+                  '• Contacts: ' + (d.contacts || 0) + '\n' +
+                  '• Accounts: ' + (d.accounts || 0) + '\n' +
+                  '• Taxes: ' + (d.taxes || 0) + '\n' +
+                  '• Payment Terms: ' + (d.payment_terms || 0) + '\n' +
+                  '• Reporting Tags: ' + (d.tags || 0) + '\n\n' +
+                  'All future invoice syncs will now use SQLite DB masters with 0 extra API calls!');
+          } else {
+            alert('❌ Failed to refresh masters: ' + (data.message || 'Unknown error'));
+          }
+        } catch (err) {
+          alert('❌ Error refreshing masters: ' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = origHtml;
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // MONTHLY AMOUNT RECONCILIATION & MATCHING REPORT
+      // ═══════════════════════════════════════════════════════════════════════════
+      function openMonthlyReconciliationModal() {
+        const modalEl = document.getElementById('monthlyReconciliationModal');
+        if (!modalEl) return;
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+        loadMonthlyReconciliationData();
+      }
+
+      async function loadMonthlyReconciliationData() {
+        const tbody = document.getElementById('monthlyReconTbody');
+        if (!tbody) return;
+
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span> Fetching Live Zoho Books Cloud invoice totals & checking amounts...</td></tr>`;
+
+        try {
+          const res = await fetch('/api/invoices/reconciliation/monthly?live=true');
+          const data = await res.json();
+
+          if (data.status === 'success' && data.months) {
+            renderMonthlyReconTable(data.months, data.summary, data.live_zoho_connected);
+          } else {
+            calculateClientSideReconciliation();
+          }
+        } catch (e) {
+          calculateClientSideReconciliation();
+        }
+      }
+
+      function calculateClientSideReconciliation() {
+        const MONTH_NAMES_SHORT = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const monthlyMap = {};
+
+        allInvoices.forEach(inv => {
+          const d = getNormalizedDate(inv.date);
+          if (!d || d.length < 6) return;
+          const ym = d.slice(0, 6);
+
+          if (!monthlyMap[ym]) {
+            monthlyMap[ym] = {
+              tally_count: 0, tally_total: 0.0,
+              zoho_count: 0, zoho_total: 0.0,
+              synced_count: 0, pending_count: 0
+            };
+          }
+
+          const tot = parseFloat(inv.total_amount) || 0.0;
+          const isSynced = (inv.zoho_status === 'synced' || Boolean(inv.zoho_invoice_id));
+
+          monthlyMap[ym].tally_count += 1;
+          monthlyMap[ym].tally_total += tot;
+
+          if (isSynced) {
+            monthlyMap[ym].zoho_count += 1;
+            monthlyMap[ym].zoho_total += tot;
+            monthlyMap[ym].synced_count += 1;
+          } else {
+            monthlyMap[ym].pending_count += 1;
+          }
+        });
+
+        const sortedYms = Object.keys(monthlyMap).sort().reverse();
+        const months = [];
+        let totalTallySum = 0;
+        let totalZohoSum = 0;
+        let matchedCount = 0;
+        let mismatchCount = 0;
+
+        sortedYms.forEach(ym => {
+          const item = monthlyMap[ym];
+          const y = ym.slice(0, 4);
+          const m = parseInt(ym.slice(4, 6));
+          const label = `${MONTH_NAMES_SHORT[m]} ${y}`;
+
+          const tallyTot = Math.round(item.tally_total * 100) / 100;
+          const zohoTot = Math.round(item.zoho_total * 100) / 100;
+          const diff = Math.round(Math.abs(tallyTot - zohoTot) * 100) / 100;
+          const isMatched = (diff <= 0.05) && (item.tally_count === item.zoho_count);
+
+          if (isMatched) matchedCount++;
+          else mismatchCount++;
+
+          totalTallySum += tallyTot;
+          totalZohoSum += zohoTot;
+
+          months.push({
+            ym: ym,
+            month_label: label,
+            tally_count: item.tally_count,
+            tally_total: tallyTot,
+            zoho_count: item.zoho_count,
+            zoho_total: zohoTot,
+            difference: diff,
+            status: isMatched ? 'MATCHED' : 'MISMATCH',
+            is_matched: isMatched,
+            is_live_zoho: false,
+            synced_count: item.synced_count,
+            pending_count: item.pending_count
+          });
+        });
+
+        const summary = {
+          total_months: sortedYms.length,
+          matched_months: matchedCount,
+          mismatched_months: mismatchCount,
+          total_tally_amount: Math.round(totalTallySum * 100) / 100,
+          total_zoho_amount: Math.round(totalZohoSum * 100) / 100,
+          overall_difference: Math.round(Math.abs(totalTallySum - totalZohoSum) * 100) / 100
+        };
+
+        renderMonthlyReconTable(months, summary, false);
+      }
+
+      function renderMonthlyReconTable(months, summary, isLiveConnected) {
+        // Update KPI Summary Cards
+        document.getElementById('recon-total-months').textContent = summary.total_months || months.length;
+        document.getElementById('recon-matched-months').textContent = summary.matched_months || 0;
+        document.getElementById('recon-mismatched-months').textContent = summary.mismatched_months || 0;
+        document.getElementById('recon-total-variance').textContent = '₹' + (summary.overall_difference || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        const liveIndicator = document.getElementById('reconLiveIndicator');
+        if (liveIndicator) {
+          if (isLiveConnected) {
+            liveIndicator.className = 'badge bg-success text-white px-3 py-2 fw-semibold';
+            liveIndicator.innerHTML = '<i class="bi bi-cloud-check-fill me-1"></i> LIVE ZOHO BOOKS API CONNECTED';
+          } else {
+            liveIndicator.className = 'badge bg-secondary text-white px-3 py-2 fw-semibold';
+            liveIndicator.innerHTML = '<i class="bi bi-database me-1"></i> LOCAL SYNCED DATA';
+          }
+        }
+
+        const tbody = document.getElementById('monthlyReconTbody');
+        if (!tbody) return;
+
+        window._rawReconMonths = months || [];
+
+        if (!months || months.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">No monthly invoice data available to reconcile.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = '';
+        months.forEach(m => {
+          const tr = document.createElement('tr');
+          tr.setAttribute('data-ym', m.ym);
+          const isMatch = m.is_matched;
+
+          const fmtCurr = (v) => '₹' + (v || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+          const statusBadge = isMatch 
+            ? `<span class="badge bg-success text-white px-3 py-2 fw-bold" style="font-size:12px;"><i class="bi bi-check-circle-fill me-1"></i>MATCHED</span>`
+            : `<span class="badge bg-danger text-white px-3 py-2 fw-bold" style="font-size:12px;"><i class="bi bi-exclamation-triangle-fill me-1"></i>AMOUNT MISMATCH</span>`;
+
+          const diffText = isMatch 
+            ? `<span class="text-success fw-bold">₹0.00</span>` 
+            : `<span class="text-danger fw-bold">+${fmtCurr(m.difference)}</span>`;
+
+          const zohoTag = m.is_live_zoho 
+            ? `<span class="badge bg-info text-dark ms-1" style="font-size:10px;"><i class="bi bi-cloud-check-fill me-1"></i>LIVE CLOUD</span>`
+            : (m.synced_count > 0 ? `<span class="badge bg-secondary text-white ms-1" style="font-size:10px;">${m.synced_count} synced</span>` : '');
+
+          const actionBtn = `
+            <div class="d-flex align-items-center justify-content-center gap-1">
+              <button class="btn btn-xs btn-outline-success px-2 py-1 small fw-semibold" onclick="fetchLiveSingleMonthRow('${m.ym}', this)" title="Query Live Zoho Books Cloud API for ${m.month_label}">
+                <i class="bi bi-cloud-arrow-down-fill me-1"></i>Live Check
+              </button>
+              <button class="btn btn-xs btn-outline-primary px-2 py-1 small" onclick="filterByReconMonth('${m.ym}')" title="Filter main invoices view to this month">
+                <i class="bi bi-funnel me-1"></i>View
+              </button>
+              ${!isMatch ? `<button class="btn btn-xs btn-danger px-2 py-1 small fw-bold" onclick="openDiscrepancyBreakdownModal('${m.ym}', '${m.month_label}', ${m.difference})" title="Find exact mismatched invoices">
+                <i class="bi bi-search me-1"></i>Find
+              </button>` : ''}
+            </div>
+          `;
+
+          tr.innerHTML = `
+            <td class="fw-bold text-dark">${m.month_label}</td>
+            <td class="text-end fw-semibold">${m.tally_count} inv</td>
+            <td class="text-end fw-bold text-primary">${fmtCurr(m.tally_total)}</td>
+            <td class="text-end fw-semibold">${m.zoho_count} inv ${zohoTag}</td>
+            <td class="text-end fw-bold text-success">${fmtCurr(m.zoho_total)}</td>
+            <td class="text-end">${diffText}</td>
+            <td class="text-center">${statusBadge}</td>
+            <td class="text-center">${actionBtn}</td>
+          `;
+
+          if (!isMatch) {
+            tr.style.background = '#fff5f5';
+          }
+
+          tbody.appendChild(tr);
+        });
+      }
+
+      function filterByReconMonth(ym) {
+        const modalEl = document.getElementById('monthlyReconciliationModal');
+        if (modalEl) {
+          const modal = bootstrap.Modal.getInstance(modalEl);
+          if (modal) modal.hide();
+        }
+        quickMonth(ym);
+      }
+
+      async function openDiscrepancyBreakdownModal(ym, monthLabel, diff) {
+        const modalEl = document.getElementById('discrepancyBreakdownModal');
+        if (!modalEl) return;
+
+        const fmtCurr = (v) => '₹' + (v || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        document.getElementById('discrepancyModalTitle').innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>${monthLabel} — Invoice Discrepancy Breakdown`;
+        document.getElementById('discrepancySubtitle').textContent = `Total Monthly Difference: ${fmtCurr(diff)}`;
+
+        const tbody = document.getElementById('discrepancyTbody');
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span> Loading invoice discrepancies...</td></tr>`;
+
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+
+        try {
+          const res = await fetch(`/api/invoices/reconciliation/account_discrepancies?month=${ym}`);
+          const data = await res.json();
+
+          if (data.status === 'success' && data.invoices) {
+            tbody.innerHTML = '';
+            const mismatchedInvs = data.invoices.filter(x => x.variance && x.variance.total > 0.05);
+            const displayInvs = mismatchedInvs.length > 0 ? mismatchedInvs : data.invoices;
+
+            if (displayInvs.length === 0) {
+              tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-success"><i class="bi bi-check-circle-fill me-1"></i> All invoices match perfectly for ${monthLabel}.</td></tr>`;
+              return;
+            }
+
+            displayInvs.forEach(inv => {
+              const tr = document.createElement('tr');
+              const diffAmt = inv.variance ? inv.variance.total : 0;
+
+              let causeReason = '<span class="text-success"><i class="bi bi-check-circle me-1"></i>Amount matches</span>';
+              if (diffAmt > 0.05) {
+                causeReason = `<span class="text-danger fw-semibold">Variance of ${fmtCurr(diffAmt)} between Tally (${fmtCurr(inv.tally.total)}) and Zoho (${fmtCurr(inv.zoho.total)})</span>`;
+              } else if (inv.has_other_charges) {
+                causeReason = `<span class="text-warning fw-semibold">₹${inv.tally.other_charges.toFixed(2)} Unloading/Other Charge mapped to Zoho Sales</span>`;
+              }
+
+              tr.innerHTML = `
+                <td class="fw-bold text-primary">${inv.invoice_number}</td>
+                <td>${inv.customer_name}<div class="text-muted small">${inv.date}</div></td>
+                <td class="text-end fw-semibold text-primary">${fmtCurr(inv.tally.total)}</td>
+                <td class="text-end fw-semibold text-success">${fmtCurr(inv.zoho.total)}</td>
+                <td class="text-end fw-bold ${diffAmt > 0.05 ? 'text-danger' : 'text-success'}">${fmtCurr(diffAmt)}</td>
+                <td>${causeReason}</td>
+              `;
+              if (diffAmt > 0.05) tr.style.background = '#fff5f5';
+              tbody.appendChild(tr);
+            });
+          } else {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center py-3 text-danger">Failed to load discrepancies: ${data.error || 'Unknown error'}</td></tr>`;
+          }
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="6" class="text-center py-3 text-danger">Error: ${e.message}</td></tr>`;
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // TAB 2: ACCOUNT-WISE BREAKDOWN (SINGLE MONTH SELECTION ONLY)
+      // ═══════════════════════════════════════════════════════════════════════════
+      function populateAccountMonthSelector(months) {
+        const sel = document.getElementById('accountMonthSelector');
+        if (!sel) return;
+
+        const curr = sel.value;
+        sel.innerHTML = '';
+        (months || []).forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.ym;
+          opt.textContent = `${m.month_label} (${m.inv_count} invoices)`;
+          sel.appendChild(opt);
+        });
+
+        if (curr && sel.querySelector(`option[value="${curr}"]`)) {
+          sel.value = curr;
+        } else if (sel.options.length > 0) {
+          sel.selectedIndex = 0;
+        }
+      }
+
+      function onAccountMonthSelectChange() {
+        const ym = document.getElementById('accountMonthSelector')?.value;
+        const months = window._rawReconAccountMonths || [];
+        const m = months.find(x => x.ym === ym) || months[0];
+        if (!m) return;
+
+        const statusEl = document.getElementById('accountMonthLiveStatus');
+        if (statusEl) {
+          if (m.is_live_zoho) {
+            statusEl.innerHTML = `<span class="badge bg-success text-white px-2 py-1"><i class="bi bi-cloud-check-fill me-1"></i>${m.month_label} Live Zoho Cloud Verified</span>`;
+          } else {
+            statusEl.innerHTML = `<span class="text-muted"><i class="bi bi-hdd me-1"></i>Database Synced</span>`;
+          }
+        }
+
+        renderSingleMonthAccountView(m);
+      }
+
+      function renderSingleMonthAccountView(m) {
+        const fmtCurr = (v) => '₹' + (v || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        const roundNum = (v) => Math.round((v || 0) * 100) / 100;
+
+        const t_other = m.tally.other_charges || 0;
+        const z_other = m.zoho.other_charges || 0;
+
+        const v_sales = Math.abs(roundNum(m.tally.sales - m.zoho.sales));
+        const v_freight = Math.abs(roundNum(m.tally.freight_charges - m.zoho.freight_charges));
+        const v_trans = Math.abs(roundNum(m.tally.transportation_charges - m.zoho.transportation_charges));
+        const v_other = Math.abs(roundNum(t_other - z_other));
+        const v_tax = Math.abs(roundNum(m.tally.tax - m.zoho.tax));
+
+        // 4 KPI Cards for the selected month
+        document.getElementById('acc-recon-sales').innerHTML = `
+          <div class="fw-bold fs-5 text-primary">${fmtCurr(m.tally.sales)}</div>
+          <div class="small text-muted">Zoho: <span class="text-success fw-semibold">${fmtCurr(m.zoho.sales)}</span> | Var: <span class="${v_sales > 0.05 ? 'text-danger fw-bold' : 'text-success'}">${fmtCurr(v_sales)}</span></div>
+          ${t_other > 0 ? `<div class="text-muted" style="font-size:10px;">+₹${t_other.toFixed(2)} Unloading/Other Charge</div>` : ''}
+        `;
+        document.getElementById('acc-recon-freight').innerHTML = `
+          <div class="fw-bold fs-5 text-info">${fmtCurr(m.tally.freight_charges)}</div>
+          <div class="small text-muted">Zoho: <span class="text-success fw-semibold">${fmtCurr(m.zoho.freight_charges)}</span> | Var: <span class="${v_freight > 0.05 ? 'text-danger fw-bold' : 'text-success'}">${fmtCurr(v_freight)}</span></div>
+        `;
+        document.getElementById('acc-recon-transport').innerHTML = `
+          <div class="fw-bold fs-5 text-dark">${fmtCurr(m.tally.transportation_charges)}</div>
+          <div class="small text-muted">Zoho: <span class="text-success fw-semibold">${fmtCurr(m.zoho.transportation_charges)}</span> | Var: <span class="${v_trans > 0.05 ? 'text-danger fw-bold' : 'text-success'}">${fmtCurr(v_trans)}</span></div>
+        `;
+        document.getElementById('acc-recon-tax').innerHTML = `
+          <div class="fw-bold fs-5" style="color:#6f42c1;">${fmtCurr(m.tally.tax)}</div>
+          <div class="small text-muted">Zoho: <span class="text-success fw-semibold">${fmtCurr(m.zoho.tax)}</span> | Var: <span class="${v_tax > 0.05 ? 'text-danger fw-bold' : 'text-success'}">${fmtCurr(v_tax)}</span></div>
+        `;
+
+        const tbody = document.getElementById('accountReconTbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-ym', m.ym);
+        const isMatch = m.is_matched;
+
+        const statusBadge = isMatch 
+          ? `<span class="badge bg-success text-white px-3 py-2 fw-bold" style="font-size:12px;"><i class="bi bi-check-circle-fill me-1"></i>MATCHED</span>`
+          : `<span class="badge bg-danger text-white px-3 py-2 fw-bold" style="font-size:12px;"><i class="bi bi-exclamation-triangle-fill me-1"></i>MISMATCH</span>`;
+
+        const renderCell = (t_val, z_val, diff) => {
+          const isDiff = diff > 0.05;
+          return `
+            <div class="fw-bold ${isDiff ? 'text-dark' : 'text-success'}">${fmtCurr(t_val)}</div>
+            <div class="small text-muted" style="font-size:11px;">
+              Zoho: ${fmtCurr(z_val)}
+              ${isDiff ? `<span class="text-danger fw-bold ms-1">(Δ ${fmtCurr(diff)})</span>` : ''}
+            </div>
+          `;
+        };
+
+        tr.innerHTML = `
+          <td class="fw-bold text-dark fs-6">
+            ${m.month_label}
+            <div class="small text-muted" style="font-size:11px;">${m.inv_count} invoices (${m.synced_count} synced)</div>
+            ${m.is_live_zoho ? `<span class="badge bg-info text-dark px-2 mt-1" style="font-size:10px;"><i class="bi bi-cloud-check-fill me-1"></i>LIVE CLOUD</span>` : ''}
+          </td>
+          <td class="text-end">${renderCell(m.tally.sales, m.zoho.sales, m.variance.sales)}</td>
+          <td class="text-end">${renderCell(m.tally.freight_charges, m.zoho.freight_charges, m.variance.freight_charges)}</td>
+          <td class="text-end">${renderCell(m.tally.transportation_charges, m.zoho.transportation_charges, m.variance.transportation_charges)}</td>
+          <td class="text-end">${renderCell(t_other, z_other, v_other)}</td>
+          <td class="text-end">${renderCell(m.tally.tax, m.zoho.tax, m.variance.tax)}</td>
+          <td class="text-end">${renderCell(m.tally.total, m.zoho.total, m.variance.total)}</td>
+          <td class="text-center">${statusBadge}</td>
+          <td class="text-center">
+            <div class="d-flex align-items-center justify-content-center gap-1">
+              <button class="btn btn-sm btn-outline-success px-2 py-1 fw-semibold" onclick="fetchLiveSingleMonthRow('${m.ym}', this)" title="Refresh Live Zoho Cloud for ${m.month_label}">
+                <i class="bi bi-arrow-clockwise me-1"></i>Live Check
+              </button>
+              <button class="btn btn-sm btn-outline-primary px-2 py-1 fw-semibold" onclick="openAccountDiscrepancyModal('${m.ym}', '${m.month_label}')" title="Inspect all invoices and items for ${m.month_label}">
+                <i class="bi bi-search me-1"></i>Inspect Invoices
+              </button>
+            </div>
+          </td>
+        `;
+
+        if (!isMatch) {
+          tr.style.background = '#fffafa';
+        }
+
+        tbody.appendChild(tr);
+      }
+
+      async function fetchLiveAccountMonth() {
+        const sel = document.getElementById('accountMonthSelector');
+        const ym = sel ? sel.value : '';
+        const btn = document.getElementById('btnLiveCheckAccountMonth');
+        const statusEl = document.getElementById('accountMonthLiveStatus');
+
+        if (!ym) {
+          alert('Please select a month first!');
+          return;
+        }
+
+        const origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span> Querying Live Zoho...`;
+
+        try {
+          const res = await fetch(`/api/invoices/reconciliation/account_wise?month=${ym}&live=true`);
+          const data = await res.json();
+
+          if (data.status === 'success' && data.months && data.months.length > 0) {
+            const liveMonth = data.months[0];
+            
+            // Update in stored array
+            if (window._rawReconAccountMonths) {
+              const idx = window._rawReconAccountMonths.findIndex(x => x.ym === ym);
+              if (idx !== -1) window._rawReconAccountMonths[idx] = liveMonth;
+            }
+
+            renderSingleMonthAccountView(liveMonth);
+
+            if (statusEl) {
+              statusEl.innerHTML = `<span class="badge bg-success text-white px-2 py-1"><i class="bi bi-cloud-check-fill me-1"></i>${liveMonth.month_label} Live Zoho Books Verified!</span>`;
+            }
+          } else {
+            alert(`Live Zoho check failed: ${data.error || 'No data returned'}`);
+          }
+        } catch (e) {
+          alert(`Network error querying Zoho Books: ${e.message}`);
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = origHtml;
+        }
+      }
+
+      async function fetchLiveSingleMonthRow(ym, btn) {
+        if (!btn) return;
+        const origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm"></span>`;
+
+        try {
+          const res = await fetch(`/api/invoices/reconciliation/account_wise?month=${ym}&live=true`);
+          const data = await res.json();
+
+          if (data.status === 'success' && data.months && data.months.length > 0) {
+            const liveMonth = data.months[0];
+            
+            if (window._rawReconAccountMonths) {
+              const idx = window._rawReconAccountMonths.findIndex(x => x.ym === ym);
+              if (idx !== -1) window._rawReconAccountMonths[idx] = liveMonth;
+            }
+
+            renderSingleMonthAccountView(liveMonth);
+
+            const statusEl = document.getElementById('accountMonthLiveStatus');
+            if (statusEl) {
+              statusEl.innerHTML = `<span class="badge bg-success text-white px-2 py-1"><i class="bi bi-cloud-check-fill me-1"></i>${liveMonth.month_label} Live Zoho Verified!</span>`;
+            }
+          } else {
+            alert(`Live check error: ${data.error || 'Could not fetch live Zoho data'}`);
+          }
+        } catch (e) {
+          alert(`Error checking live Zoho: ${e.message}`);
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = origHtml;
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ACCOUNT-WISE MONTHLY RECONCILIATION INITIAL LOAD
+      // ═══════════════════════════════════════════════════════════════════════════
+      async function loadAccountWiseReconciliationData() {
+        const tbody = document.getElementById('accountReconTbody');
+        if (!tbody) return;
+
+        const liveBadge = document.getElementById('reconLiveIndicator');
+        if (liveBadge) {
+          liveBadge.className = 'badge bg-primary text-white ms-auto me-3 px-3 py-2 fw-semibold';
+          liveBadge.innerHTML = '<i class="bi bi-shield-check me-1"></i> ACCOUNT BREAKDOWN READY (0 API COST)';
+        }
+
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span> Loading Account-Wise Breakdown...</td></tr>`;
+
+        try {
+          const res = await fetch('/api/invoices/reconciliation/account_wise');
+          const data = await res.json();
+
+          if (data.status === 'success' && data.months) {
+            renderAccountWiseTable(data.months, data.summary);
+          } else {
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center py-3 text-danger">Failed to load account reconciliation: ${data.error || 'Unknown error'}</td></tr>`;
+          }
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-3 text-danger">Error: ${e.message}</td></tr>`;
+        }
+      }
+
+      function renderAccountWiseTable(months, summary) {
+        window._rawReconAccountMonths = months || [];
+        populateAccountMonthSelector(months);
+        onAccountMonthSelectChange();
+      }
+
+      async function openAccountDiscrepancyModal(ym, monthLabel) {
+        const modalEl = document.getElementById('accountDiscrepancyModal');
+        if (!modalEl) return;
+
+        document.getElementById('accDiscrepancyTitle').innerHTML = `<i class="bi bi-file-earmark-spreadsheet me-2"></i>${monthLabel} — Account-Wise Invoice Breakdown`;
+        document.getElementById('accDiscrepancySubtitle').textContent = `Showing all invoices, line items, and assigned accounts for ${monthLabel}.`;
+
+        const hlContainer = document.getElementById('accDiscrepancyHighlightContainer');
+        if (hlContainer) hlContainer.innerHTML = '';
+
+        const tbody = document.getElementById('accDiscrepancyTbody');
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span> Loading invoices & line items for ${monthLabel}...</td></tr>`;
+
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+
+        try {
+          const res = await fetch(`/api/invoices/reconciliation/account_discrepancies?month=${ym}`);
+          const data = await res.json();
+
+          if (data.status === 'success' && data.invoices) {
+            renderAccountDiscrepanciesTable(data.invoices, data.causes);
+          } else {
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center py-3 text-danger">Failed to load invoices: ${data.error || 'Unknown error'}</td></tr>`;
+          }
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-3 text-danger">Error: ${e.message}</td></tr>`;
+        }
+      }
+
+      function renderAccountDiscrepanciesTable(invoices, causes) {
+        const hlContainer = document.getElementById('accDiscrepancyHighlightContainer');
+        if (hlContainer) {
+          if (causes && causes.length > 0) {
+            hlContainer.innerHTML = causes.map(c => `
+              <div class="alert alert-warning border border-warning border-2 d-flex align-items-start gap-3 mb-3 p-3 shadow-sm rounded-3">
+                <i class="bi bi-exclamation-triangle-fill fs-3 text-danger flex-shrink-0 mt-1"></i>
+                <div class="flex-grow-1">
+                  <div class="d-flex align-items-center justify-content-between">
+                    <h6 class="fw-bold text-danger mb-1"><i class="bi bi-pin-angle-fill me-1"></i>Invoice ${c.invoice_number} — ${c.customer_name || ''} (${c.date}):</h6>
+                    <span class="badge bg-danger text-white fw-bold px-2 py-1">Variance: ₹${(c.amount || 0).toFixed(2)}</span>
+                  </div>
+                  <div class="text-dark fw-semibold small mb-1">${c.explanation}</div>
+                </div>
+              </div>
+            `).join('');
+          } else {
+            hlContainer.innerHTML = `<div class="alert alert-success border-0 shadow-sm py-2 px-3 small mb-3"><i class="bi bi-check-circle-fill me-1"></i> All line items and accounts match between Tally and Zoho Books!</div>`;
+          }
+        }
+
+        const tbody = document.getElementById('accDiscrepancyTbody');
+        if (!tbody) return;
+
+        if (!invoices || invoices.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">No invoices found for this month.</td></tr>`;
+          return;
+        }
+
+        const fmtCurr = (v) => '₹' + (v || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        tbody.innerHTML = '';
+        invoices.forEach(inv => {
+          const tr = document.createElement('tr');
+          const isMismatched = inv.has_account_mismatch || inv.has_other_charges || (inv.variance && inv.variance.total > 0.05);
+
+          if (isMismatched) {
+            tr.style.background = '#fff5f5';
+            tr.style.borderLeft = '4px solid #dc3545';
+          }
+          
+          const itemsList = (inv.items || []).map(it => {
+            if (it.is_account_mismatch) {
+              return `
+                <div class="d-flex align-items-center justify-content-between gap-2 p-1 bg-danger-subtle rounded my-1 border border-danger border-opacity-25">
+                  <span class="text-truncate fw-bold text-danger" style="max-width:200px;" title="${it.item_name}">${it.item_name}</span>
+                  <div>
+                    <span class="badge bg-primary text-white" style="font-size:9px;" title="Tally Account">${it.tally_account}</span>
+                    <i class="bi bi-arrow-right text-danger mx-1" style="font-size:10px;"></i>
+                    <span class="badge bg-warning text-dark" style="font-size:9px;" title="Zoho Account">${it.zoho_account}</span>
+                  </div>
+                  <span class="fw-bold text-danger">${fmtCurr(it.amount)}</span>
+                </div>
+              `;
+            }
+
+            let badgeClass = 'bg-primary-subtle text-primary border border-primary';
+            if (it.account === 'Freight Charges') badgeClass = 'bg-info-subtle text-info border border-info';
+            if (it.account === 'Transportation Charges') badgeClass = 'bg-warning-subtle text-warning border border-warning';
+            if (it.account === 'Other / Unloading Charges') badgeClass = 'bg-danger text-white fw-bold shadow-sm';
+
+            return `
+              <div class="d-flex align-items-center justify-content-between gap-2 py-1 border-bottom border-light">
+                <span class="text-truncate" style="max-width:260px;" title="${it.item_name}">${it.item_name}</span>
+                <span class="badge ${badgeClass} px-2 py-0" style="font-size:10px;">${it.account}</span>
+                <span class="fw-semibold text-dark">${fmtCurr(it.amount)}</span>
+              </div>
+            `;
+          }).join('');
+
+          const syncBadge = inv.is_synced 
+            ? `<span class="badge bg-success text-white px-2 py-1" style="font-size:10px;">Synced</span>` 
+            : `<span class="badge bg-secondary text-white px-2 py-1" style="font-size:10px;">Pending</span>`;
+
+          const alertBadge = isMismatched 
+            ? `<div class="mt-1"><span class="badge bg-danger text-white px-2 py-1 fw-bold" style="font-size:10px;"><i class="bi bi-exclamation-triangle-fill me-1"></i>Account Variance</span></div>`
+            : '';
+
+          const renderCell = (t_val, z_val) => {
+            const diff = Math.abs(roundNum((t_val || 0) - (z_val || 0)));
+            const isDiff = diff > 0.05;
+            return `
+              <div class="fw-bold ${isDiff ? 'text-danger' : 'text-dark'}">${fmtCurr(t_val)}</div>
+              <div class="small text-muted" style="font-size:10px;">
+                Zoho: ${fmtCurr(z_val)}
+                ${isDiff ? `<span class="text-danger fw-bold ms-1">(Δ ${fmtCurr(diff)})</span>` : ''}
+              </div>
+            `;
+          };
+
+          const roundNum = (v) => Math.round((v || 0) * 100) / 100;
+
+          tr.innerHTML = `
+            <td class="fw-bold text-primary">${inv.invoice_number}<br>${syncBadge}${alertBadge}</td>
+            <td>${inv.customer_name}<div class="text-muted small">${inv.date}</div></td>
+            <td>${itemsList}</td>
+            <td class="text-end">${renderCell(inv.tally.sales, inv.zoho.sales)}</td>
+            <td class="text-end">${renderCell(inv.tally.freight, inv.zoho.freight)}</td>
+            <td class="text-end">${renderCell(inv.tally.transport, inv.zoho.transport)}</td>
+            <td class="text-end">${renderCell(inv.tally.other_charges || 0, inv.zoho.other_charges || 0)}</td>
+            <td class="text-end">${renderCell(inv.tally.total, inv.zoho.total)}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function exportAccountReconExcel() {
+        window.location.href = '/api/invoices/reconciliation/export_account_recon_excel';
+      }
     </script>
+
+    <!-- MONTHLY AMOUNT RECONCILIATION MODAL -->
+    <div class="modal fade" id="monthlyReconciliationModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable" style="max-width:92vw;">
+            <div class="modal-content border-0 shadow-lg" style="border-radius:16px;">
+                <div class="modal-header text-white d-flex align-items-center" style="background: linear-gradient(135deg, #1e3a8a 0%, #0288d1 100%); border-radius:16px 16px 0 0;">
+                    <h5 class="modal-title fw-bold mb-0">
+                        <i class="bi bi-calculator me-2"></i>Tally vs Zoho Books Monthly &amp; Account Reconciliation
+                    </h5>
+                    <span id="reconLiveIndicator" class="badge bg-success text-white ms-auto me-3 px-3 py-2 fw-semibold">
+                        <i class="bi bi-cloud-check-fill me-1"></i> LIVE ZOHO API CONNECTED
+                    </span>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+
+                <!-- NAVIGATION TABS -->
+                <div class="bg-white border-bottom px-4 pt-3">
+                    <ul class="nav nav-pills gap-2" id="reconTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active fw-bold px-3 py-2" id="total-recon-tab" data-bs-toggle="pill" data-bs-target="#totalReconPane" type="button" role="tab">
+                                <i class="bi bi-bar-chart-fill me-1"></i> 1. Overall Monthly Totals (All Months Overview)
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link fw-bold px-3 py-2" id="account-recon-tab" data-bs-toggle="pill" data-bs-target="#accountReconPane" type="button" role="tab" onclick="loadAccountWiseReconciliationData()">
+                                <i class="bi bi-journal-bookmark-fill me-1"></i> 2. Account-Wise Breakdown (Sales / Freight / Transport / Taxes)
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="modal-body p-4 tab-content">
+                    <!-- TAB 1: OVERALL MONTHLY TOTALS (ALL 33 MONTHS OVERVIEW) -->
+                    <div class="tab-pane fade show active" id="totalReconPane" role="tabpanel">
+                        <!-- KPI SUMMARY CARDS -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-primary border-opacity-25 text-center">
+                                    <div class="text-muted small fw-bold uppercase">Months Checked</div>
+                                    <div class="fs-3 fw-bold text-primary" id="recon-total-months">0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-success border-opacity-25 text-center">
+                                    <div class="text-muted small fw-bold">Matched Months ✅</div>
+                                    <div class="fs-3 fw-bold text-success" id="recon-matched-months">0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-danger border-opacity-25 text-center">
+                                    <div class="text-muted small fw-bold">Amount Mismatches ⚠️</div>
+                                    <div class="fs-3 fw-bold text-danger" id="recon-mismatched-months">0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-info border-opacity-25 text-center">
+                                    <div class="text-muted small fw-bold">Total Variance (₹)</div>
+                                    <div class="fs-3 fw-bold text-dark" id="recon-total-variance">₹0.00</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RECONCILIATION TABLE (ALL MONTHS) -->
+                        <div class="table-responsive rounded-3 border shadow-sm" style="max-height: 520px;">
+                            <table class="table table-hover align-middle mb-0" id="monthlyReconTable">
+                                <thead class="table-light fw-bold text-secondary sticky-top">
+                                    <tr>
+                                        <th>Month</th>
+                                        <th class="text-end">Tally Invoices</th>
+                                        <th class="text-end">Tally Total (₹)</th>
+                                        <th class="text-end">Zoho Invoices</th>
+                                        <th class="text-end">Zoho Total (₹)</th>
+                                        <th class="text-end">Variance / Diff (₹)</th>
+                                        <th class="text-center">Status</th>
+                                        <th class="text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="monthlyReconTbody">
+                                    <!-- Dynamic rows inserted here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- TAB 2: ACCOUNT-WISE BREAKDOWN (SINGLE MONTH SELECTION ONLY) -->
+                    <div class="tab-pane fade" id="accountReconPane" role="tabpanel">
+                        <!-- MONTH SELECTOR TOOLBAR FOR TAB 2 (INDIVIDUAL MONTHS ONLY) -->
+                        <div class="bg-light border rounded-3 p-3 mb-4 d-flex align-items-center justify-content-between flex-wrap gap-2 shadow-sm">
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <label class="fw-bold text-dark mb-0"><i class="bi bi-calendar3 text-primary me-1"></i>Select Month:</label>
+                                <select id="accountMonthSelector" class="form-select form-select-sm fw-bold border-primary shadow-sm" style="min-width: 240px;" onchange="onAccountMonthSelectChange()">
+                                    <!-- Individual months only (No 'All Months' option) -->
+                                </select>
+                                <button class="btn btn-sm btn-primary fw-semibold shadow-sm d-flex align-items-center gap-1" id="btnLiveCheckAccountMonth" onclick="fetchLiveAccountMonth()">
+                                    <i class="bi bi-cloud-arrow-down-fill"></i> Check Live Zoho (Selected Month)
+                                </button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <span id="accountMonthLiveStatus" class="small fw-semibold"></span>
+                                <button class="btn btn-sm btn-outline-success fw-semibold d-flex align-items-center gap-1" onclick="exportAccountReconExcel()">
+                                    <i class="bi bi-file-earmark-excel-fill text-success"></i> Export Excel
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 4 ACCOUNT KPI CARDS FOR SELECTED MONTH -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-primary border-opacity-25">
+                                    <div class="text-muted small fw-bold"><i class="bi bi-box-seam me-1 text-primary"></i> Sales (Goods/Items)</div>
+                                    <div id="acc-recon-sales" class="mt-1">
+                                        <div class="fs-5 fw-bold text-primary">₹0.00</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-info border-opacity-25">
+                                    <div class="text-muted small fw-bold"><i class="bi bi-truck me-1 text-info"></i> Freight Charges</div>
+                                    <div id="acc-recon-freight" class="mt-1">
+                                        <div class="fs-5 fw-bold text-info">₹0.00</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-warning border-opacity-25">
+                                    <div class="text-muted small fw-bold"><i class="bi bi-send me-1 text-warning"></i> Transportation Charges</div>
+                                    <div id="acc-recon-transport" class="mt-1">
+                                        <div class="fs-5 fw-bold text-dark">₹0.00</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="p-3 bg-light rounded-3 border border-purple border-opacity-25">
+                                    <div class="text-muted small fw-bold"><i class="bi bi-receipt me-1 text-purple"></i> Taxes (GST/CST)</div>
+                                    <div id="acc-recon-tax" class="mt-1">
+                                        <div class="fs-5 fw-bold" style="color:#6f42c1;">₹0.00</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ACCOUNT RECONCILIATION TABLE -->
+                        <div class="table-responsive rounded-3 border shadow-sm" style="max-height: 520px;">
+                            <table class="table table-hover align-middle mb-0" id="accountReconTable">
+                                <thead class="table-light fw-bold text-secondary sticky-top">
+                                    <tr>
+                                        <th>Month</th>
+                                        <th class="text-end">Sales (GST Goods)</th>
+                                        <th class="text-end">Freight Charges</th>
+                                        <th class="text-end">Transportation</th>
+                                        <th class="text-end">Other / Unloading</th>
+                                        <th class="text-end">Taxes (GST)</th>
+                                        <th class="text-end">Total Invoice (₹)</th>
+                                        <th class="text-center">Status</th>
+                                        <th class="text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="accountReconTbody">
+                                    <!-- Dynamic rows inserted here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <div>
+                        <button type="button" class="btn btn-outline-success btn-sm me-2" onclick="exportAccountReconExcel()">
+                            <i class="bi bi-download me-1"></i> Download Excel Audit
+                        </button>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                        <button type="button" class="btn btn-primary" onclick="loadMonthlyReconciliationData(); loadAccountWiseReconciliationData();">
+                            <i class="bi bi-arrow-clockwise me-1"></i> Refresh All
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- INDIVIDUAL INVOICE DISCREPANCY BREAKDOWN MODAL -->
+    <div class="modal fade" id="discrepancyBreakdownModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow-lg" style="border-radius:16px;">
+                <div class="modal-header bg-danger text-white d-flex align-items-center" style="border-radius:16px 16px 0 0;">
+                    <h5 class="modal-title fw-bold mb-0" id="discrepancyModalTitle">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>Invoice Discrepancy Breakdown
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="alert alert-danger border-0 shadow-sm d-flex align-items-center gap-3 mb-4" style="border-radius:12px;">
+                        <i class="bi bi-info-circle-fill fs-2"></i>
+                        <div>
+                            <div class="fw-bold fs-6" id="discrepancySubtitle">Discrepancy Details</div>
+                            <div class="small">Below are the exact invoice-by-invoice differences between Tally and Zoho Books for this month.</div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive rounded-3 border shadow-sm">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light fw-bold text-secondary">
+                                <tr>
+                                    <th>Invoice #</th>
+                                    <th>Customer Name</th>
+                                    <th class="text-end">Tally Amount (₹)</th>
+                                    <th class="text-end">Zoho Amount (₹)</th>
+                                    <th class="text-end">Difference (₹)</th>
+                                    <th>Reason / Discrepancy Cause</th>
+                                </tr>
+                            </thead>
+                            <tbody id="discrepancyTbody">
+                                <!-- Dynamic rows inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ACCOUNT-WISE LINE ITEM DISCREPANCY MODAL -->
+    <div class="modal fade" id="accountDiscrepancyModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable" style="max-width:88vw;">
+            <div class="modal-content border-0 shadow-lg" style="border-radius:16px;">
+                <div class="modal-header text-white d-flex align-items-center" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); border-radius:16px 16px 0 0;">
+                    <h5 class="modal-title fw-bold mb-0" id="accDiscrepancyTitle">
+                        <i class="bi bi-file-earmark-spreadsheet me-2"></i>Account-Wise Invoice Breakdown
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="alert alert-primary border-0 shadow-sm d-flex align-items-center gap-3 mb-3" style="border-radius:12px;">
+                        <i class="bi bi-info-circle-fill fs-2 text-primary"></i>
+                        <div>
+                            <div class="fw-bold fs-6" id="accDiscrepancySubtitle">Account Details</div>
+                            <div class="small text-muted">Inspect each invoice's line items and verify whether charges or goods were assigned to Sales, Freight Charges, Transportation Charges, or Other Charges.</div>
+                        </div>
+                    </div>
+
+                    <!-- Highlight box for identified discrepancies / causes -->
+                    <div id="accDiscrepancyHighlightContainer"></div>
+
+                    <div class="table-responsive rounded-3 border shadow-sm" style="max-height: 550px;">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light fw-bold text-secondary sticky-top">
+                                <tr>
+                                    <th>Invoice #</th>
+                                    <th>Customer &amp; Date</th>
+                                    <th style="min-width:320px;">Line Items &amp; Assigned Account</th>
+                                    <th class="text-end text-primary">Sales (Goods)</th>
+                                    <th class="text-end text-info">Freight (₹)</th>
+                                    <th class="text-end text-warning text-dark">Transport (₹)</th>
+                                    <th class="text-end text-danger">Other Charges (₹)</th>
+                                    <th class="text-end text-success">Total Amount (₹)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="accDiscrepancyTbody">
+                                <!-- Dynamic rows inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

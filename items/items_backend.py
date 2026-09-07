@@ -1,5 +1,6 @@
 import requests
 import re
+import time
 from datetime import datetime
 import sys
 import os
@@ -485,7 +486,39 @@ def sync_items_to_zoho(selected_items=None, *, log=None, stop_event=None):
                 return {"status": "error", "message": "No Tally Data"}
             items_to_sync = data["items"]
     else:
-        items_to_sync = selected_items
+        # Dynamically resolve selected_items (handles list of string names or list of dicts)
+        if selected_items and isinstance(selected_items, list):
+            db_items = []
+            if database_manager:
+                try:
+                    database_manager.init_db()
+                    db_items = database_manager.get_all_items()
+                except Exception:
+                    pass
+            if not db_items:
+                data = get_all_items_data()
+                db_items = data.get("items", []) if data else []
+                
+            db_item_map = {}
+            for i in db_items:
+                if isinstance(i, dict):
+                    nm = (i.get("name") or i.get("item_name") or "").strip()
+                    if nm:
+                        db_item_map[nm.lower()] = i
+                        
+            resolved_items = []
+            for sel in selected_items:
+                if isinstance(sel, str):
+                    sel_name = sel.strip()
+                    if sel_name.lower() in db_item_map:
+                        resolved_items.append(db_item_map[sel_name.lower()])
+                    else:
+                        resolved_items.append({"name": sel_name, "item_name": sel_name})
+                elif isinstance(sel, dict):
+                    resolved_items.append(sel)
+            items_to_sync = resolved_items
+        else:
+            items_to_sync = []
 
     if not items_to_sync:
         return {"status": "error", "message": "No items to sync"}
@@ -723,12 +756,21 @@ def sync_items_to_zoho(selected_items=None, *, log=None, stop_event=None):
             page += 1
         _emit(f"Pre-loaded {len(existing_items)} existing Zoho items")
 
-    # If resume-only-new is enabled, reduce the work by filtering to new items only
+    # If user manually selected items, force sync/update for those specific items
+    is_explicit_selection = bool(selected_items)
+    if is_explicit_selection:
+        _emit("Manual selection detected: Syncing selected item(s)...")
+        resume_only_new = False
+        update_existing = True
+
+    # If resume-only-new is enabled (for bulk sync), reduce the work by filtering to new items only
     skipped_by_resume = 0
-    if resume_only_new and not update_existing and existing_items:
+    if not is_explicit_selection and resume_only_new and not update_existing and existing_items:
         before_count = len(items_to_sync)
         filtered = []
         for it in items_to_sync:
+            if isinstance(it, str):
+                it = {"name": it, "item_name": it}
             nm = (it.get("name") or "").strip().lower()
             if nm and nm not in existing_items:
                 filtered.append(it)
@@ -757,28 +799,43 @@ def sync_items_to_zoho(selected_items=None, *, log=None, stop_event=None):
 
     def _call_item_api(method: str, path: str, payload: dict):
         """
-        Zoho sometimes rejects unknown/unsupported fields by DC/edition.
-        Retry once without optional fields if needed.
+        Zoho sometimes rejects unknown/unsupported fields by DC/edition or hits rate limits (Code 45).
         """
-        res = zoho.api_call(method, path, payload=payload)
-        if res.get("code") == 0:
+        time.sleep(0.35)  # API pacing (~170 reqs/min safe threshold)
+        
+        attempts = 0
+        while attempts < 3:
+            res = zoho.api_call(method, path, payload=payload)
+            code = res.get("code")
+            msg = (res.get("message") or "").lower()
+            
+            if code == 45 or "rate limit" in msg or "too many requests" in msg:
+                attempts += 1
+                _emit(f"   [RATE LIMIT WARNING] Zoho Code 45 limit reached. Auto-pausing 15s (Attempt {attempts}/3)...")
+                time.sleep(15)
+                continue
+            
+            if code == 0:
+                return res
+
+            # Retry without optional fields (inventory valuation + tax prefs) if rejected
+            optional_keys = {
+                "inventory_valuation_method",
+                "item_tax_preferences",
+            }
+            if any(k in payload for k in optional_keys) and ("invalid" in msg or "unexpected" in msg or "not allowed" in msg):
+                payload2 = {k: v for k, v in payload.items() if k not in optional_keys}
+                res2 = zoho.api_call(method, path, payload=payload2)
+                if res2.get("code") == 0:
+                    return res2
             return res
 
-        msg = (res.get("message") or "").lower()
-
-        # Retry without optional fields (inventory valuation + tax prefs)
-        optional_keys = {
-            "inventory_valuation_method",
-            "item_tax_preferences",
-        }
-        if any(k in payload for k in optional_keys) and ("invalid" in msg or "unexpected" in msg or "not allowed" in msg):
-            payload2 = {k: v for k, v in payload.items() if k not in optional_keys}
-            res2 = zoho.api_call(method, path, payload=payload2)
-            if res2.get("code") == 0:
-                return res2
         return res
 
     for idx, i in enumerate(items_to_sync, 1):
+        if isinstance(i, str):
+            i = {"name": i, "item_name": i}
+            
         if _should_stop():
             _emit("Stopped by user. Exiting sync loop.")
             return {"status": "stopped", "stats": stats, "failed_items": failed_items}
@@ -919,6 +976,196 @@ def sync_items_to_zoho(selected_items=None, *, log=None, stop_event=None):
 
     _emit(f"Items Sync Complete — Created: {stats['created']}, Updated: {stats['updated']}, Skipped: {stats['skipped']}, Failed: {stats['failed']}")
     return {"status": "success", "stats": stats, "failed_items": failed_items}
+
+
+ZOHO_ITEM_EXPORT_HEADERS = [
+    "Item ID",
+    "Item Name",
+    "HSN/SAC",
+    "Is Tax Calculated on Label Price",
+    "Description",
+    "Rate",
+    "Account",
+    "Account Code",
+    "Taxable",
+    "Exemption Reason",
+    "Taxability Type",
+    "Product Type",
+    "Product Name",
+    "Intra State Tax Name",
+    "Intra State Tax Rate",
+    "Intra State Tax Type",
+    "Inter State Tax Name",
+    "Inter State Tax Rate",
+    "Inter State Tax Type",
+    "Source",
+    "Reference ID",
+    "Last Sync Time",
+    "Status",
+    "Usage unit",
+    "Unit Name",
+    "Purchase Rate",
+    "Purchase Account",
+    "Purchase Account Code",
+    "Purchase Description",
+    "Inventory Account",
+    "Inventory Account Code",
+    "Inventory Valuation Method",
+    "Reorder Point",
+    "Vendor",
+    "Location Name",
+    "Opening Stock",
+    "Opening Stock Value",
+    "Stock On Hand",
+    "Item Type",
+    "Sellable",
+    "Purchasable",
+    "Track Inventory"
+]
+
+
+def generate_zoho_formatted_items_excel(items_list):
+    """
+    Generates a styled 42-column Excel file (.xlsx) matching Zoho Books Item.xlsx export structure.
+    """
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Item"
+    ws.views.sheetView[0].showGridLines = True
+
+    header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")  # Dark Navy Blue
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    zebra_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    data_font = Font(name="Segoe UI", size=10, color="1E293B")
+    
+    thin_border = Border(
+        left=Side(style='thin', color='E2E8F0'),
+        right=Side(style='thin', color='E2E8F0'),
+        top=Side(style='thin', color='E2E8F0'),
+        bottom=Side(style='thin', color='E2E8F0')
+    )
+
+    ws.row_dimensions[1].height = 28
+    for col_num, h in enumerate(ZOHO_ITEM_EXPORT_HEADERS, 1):
+        cell = ws.cell(row=1, column=col_num, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+
+    current_row_idx = 2
+
+    for item in items_list:
+        if isinstance(item, str):
+            item = {"name": item, "item_name": item}
+            
+        name = str(item.get("name") or item.get("item_name") or "").strip()
+        hsn = str(item.get("hsn") or item.get("hsn_sac") or "").strip()
+        desc = str(item.get("description") or name).strip()
+        rate = float(item.get("rate") or 0)
+        
+        try:
+            gst_pct = float(item.get("gst_rate", 0) or 0)
+        except Exception:
+            gst_pct = 12.0
+        if not gst_pct:
+            gst_pct = 12.0
+
+        gst_int = int(round(gst_pct)) if abs(gst_pct - round(gst_pct)) < 1e-4 else gst_pct
+        intra_tax_name = f"GST{gst_int}"
+        inter_tax_name = f"IGST{gst_int}"
+        tax_rate_str = f"{gst_pct:.6f}"
+
+        unit = str(item.get("unit") or item.get("qty_unit") or "Nos").strip()
+        qty = float(item.get("qty") or item.get("quantity") or 0)
+        val = float(item.get("value") or 0)
+        item_id = str(item.get("zoho_item_id") or item.get("item_id") or "")
+
+        row_dict = {h: "" for h in ZOHO_ITEM_EXPORT_HEADERS}
+        row_dict["Item ID"] = item_id
+        row_dict["Item Name"] = name
+        row_dict["HSN/SAC"] = hsn
+        row_dict["Is Tax Calculated on Label Price"] = "FALSE"
+        row_dict["Description"] = desc
+        row_dict["Rate"] = f"INR {rate:.2f}"
+        row_dict["Account"] = str(item.get("sales_ledger") or "Sales")
+        row_dict["Account Code"] = ""
+        row_dict["Taxable"] = "true"
+        row_dict["Exemption Reason"] = ""
+        row_dict["Taxability Type"] = ""
+        row_dict["Product Type"] = "goods"
+        row_dict["Product Name"] = name
+        row_dict["Intra State Tax Name"] = intra_tax_name
+        row_dict["Intra State Tax Rate"] = tax_rate_str
+        row_dict["Intra State Tax Type"] = "Group"
+        row_dict["Inter State Tax Name"] = inter_tax_name
+        row_dict["Inter State Tax Rate"] = tax_rate_str
+        row_dict["Inter State Tax Type"] = "Simple"
+        row_dict["Source"] = "2"
+        row_dict["Reference ID"] = ""
+        row_dict["Last Sync Time"] = ""
+        row_dict["Status"] = "Active"
+        row_dict["Usage unit"] = unit
+        row_dict["Unit Name"] = ""
+        row_dict["Purchase Rate"] = "INR 0.00"
+        row_dict["Purchase Account"] = "Cost of Goods Sold"
+        row_dict["Purchase Account Code"] = ""
+        row_dict["Purchase Description"] = desc
+        row_dict["Inventory Account"] = "Inventory Asset"
+        row_dict["Inventory Account Code"] = ""
+        row_dict["Inventory Valuation Method"] = "fifo"
+        row_dict["Reorder Point"] = ""
+        row_dict["Vendor"] = ""
+        row_dict["Location Name"] = ""
+        row_dict["Opening Stock"] = str(qty) if qty else ""
+        row_dict["Opening Stock Value"] = str(val) if val else ""
+        row_dict["Stock On Hand"] = f"{qty:.1f}"
+        row_dict["Item Type"] = "Inventory"
+        row_dict["Sellable"] = "true"
+        row_dict["Purchasable"] = "true"
+        row_dict["Track Inventory"] = "true"
+
+        row_values = [row_dict[h] for h in ZOHO_ITEM_EXPORT_HEADERS]
+        ws.append(row_values)
+
+        row_fill = zebra_fill if (current_row_idx % 2 == 0) else white_fill
+        ws.row_dimensions[current_row_idx].height = 20
+
+        for col_idx in range(1, len(ZOHO_ITEM_EXPORT_HEADERS) + 1):
+            c = ws.cell(row=current_row_idx, column=col_idx)
+            c.fill = row_fill
+            c.font = data_font
+            c.border = thin_border
+            header_name = ZOHO_ITEM_EXPORT_HEADERS[col_idx - 1]
+            if header_name in ["Rate", "Purchase Rate", "Opening Stock Value"]:
+                c.alignment = Alignment(horizontal="right", vertical="center")
+            elif header_name in ["Opening Stock", "Stock On Hand"]:
+                c.alignment = Alignment(horizontal="center", vertical="center")
+            else:
+                c.alignment = Alignment(horizontal="left", vertical="center")
+
+        current_row_idx += 1
+
+    # Auto-fit column widths
+    for col_idx in range(1, len(ZOHO_ITEM_EXPORT_HEADERS) + 1):
+        col_letter = get_column_letter(col_idx)
+        max_len = len(str(ZOHO_ITEM_EXPORT_HEADERS[col_idx - 1]))
+        for row in range(2, ws.max_row + 1):
+            val = ws.cell(row=row, column=col_idx).value
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[col_letter].width = min(max(max_len + 4, 12), 45)
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
 
 
 if __name__ == "__main__":

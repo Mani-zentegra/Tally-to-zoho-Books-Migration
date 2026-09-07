@@ -191,7 +191,7 @@
         <!-- CONTENT TABLE -->
         <div class="content-card">
             <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div class="input-group" style="max-width: 300px;">
+                <div class="input-group" style="max-width: 250px;">
                     <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
                     <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search sales orders..." onkeyup="applyFilters()">
                 </div>
@@ -321,7 +321,7 @@
 
         // Load cached data on startup  priority: localStorage (only if non-empty)  DB  empty
         document.addEventListener('DOMContentLoaded', async () => {
-            const cached = localStorage.getItem('salesOrdersData');
+            const cached = null; // cache disabled
             if (cached) {
                 try {
                     const data = JSON.parse(cached);
@@ -334,9 +334,9 @@
                         return;
                     }
                     // Empty cache: remove and fall back to DB load
-                    localStorage.removeItem('salesOrdersData');
+                    // localStorage.removeItem('salesOrdersData');
                 } catch(e) {
-                    localStorage.removeItem('salesOrdersData');
+                    // localStorage.removeItem('salesOrdersData');
                 }
             }
 
@@ -391,7 +391,7 @@
 
                 allOrders = data.sales_orders;
                 stats     = data.stats;
-                localStorage.setItem('salesOrdersData', JSON.stringify(data));
+                // localStorage.setItem('salesOrdersData', JSON.stringify(data));
 
                 updateKPIs(stats);
                 applyFilters();   // re-apply any active month filter
@@ -769,7 +769,7 @@
 
                 if (response.ok) {
                     allSalesOrders = result.data || result.invoices || result.bills || result.receipts || result.sales_orders || result.purchase_orders || result.journals || [];
-                    localStorage.setItem('allSalesOrders', JSON.stringify(allSalesOrders));
+                    // localStorage.setItem('allSalesOrders', JSON.stringify(allSalesOrders));
                     alert(result.message || 'JSON uploaded successfully!');
                     renderSalesOrders();
                 } else {

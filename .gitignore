@@ -1,0 +1,110 @@
+# ==============================================================================
+# 1. Environment, Secrets & Credentials (PROTECTED)
+# ==============================================================================
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.p12
+*.crt
+*credential*
+*Credential*
+Api Creditals/
+.active_company
+.last_active_db
+.token_cache.json
+modules/.token_cache.json
+companies_config.json
+!companies_config.example.json
+
+# ==============================================================================
+# 2. Python Bytecode & Virtual Environments
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# ==============================================================================
+# 3. Database Locks & Redundant Temp Backups
+# ==============================================================================
+*_backup_before_*.db
+*_backup_*.db
+tally_data_backup_before_*.db
+*.db-shm
+*.db-wal
+new.db
+test.db
+
+# ==============================================================================
+# 4. Large Data Dumps & Proprietary Tally Backups (>100MB / raw exports)
+# ==============================================================================
+Backup files/
+*.1800
+*.900
+*.001
+*.TSF
+*.tsf
+invoice.json
+payment_made.json
+receipt.json
+journel.json
+credit note.json
+zoho_2016_bills_backup.json
+Payments made/DayBook.json
+contra/contra.json
+get test/
+ledgers/Master.xml
+items/Items_xml_agri.xml
+opening balance/*.pdf
+opening balance/*.xlsx
+opening balance/*.json
+
+# ==============================================================================
+# 5. Logs, Temp Reports & Uploads
+# ==============================================================================
+*.log
+*.tmp
+*.temp
+uploads/
+scratch/
+waste/
+Receipts_Received_Errors_*.xlsx
+Payments_Expenses_Zoho_Sync_Report.xlsx
+inv_adj_run_report_*.xlsx
+Tally Migration Backup - 28-4-2026/
+
+# ==============================================================================
+# 6. One-off Patch & Scratch Scripts
+# ==============================================================================
+patch_*.py
+fix_*.py
+replace_script.py
+temp_script.js
+check_db.py
+scratch.py
+execute_group_sync.txt
+templates/journel_backend-new.py
+items/GdwnSum (1).xml
+purchase_order/api_wrappers_temp.py
+
+# ==============================================================================
+# 7. IDE & OS Artifacts
+# ==============================================================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~

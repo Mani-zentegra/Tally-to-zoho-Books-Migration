@@ -102,6 +102,9 @@ def fetch_tally_payments(from_date="20250401", to_date="20250430", limit=None, c
             rounding_ledger = ""
             vendor_name     = ""
             vendor_ledger_amount = 0.0
+            
+            dr_candidates = []
+            cr_candidates = []
 
             raw_entries = v.find_all('LEDGERENTRIES.LIST') or v.find_all('ALLLEDGERENTRIES.LIST')
             for entry in raw_entries:
@@ -129,15 +132,37 @@ def fetch_tally_payments(from_date="20250401", to_date="20250430", limit=None, c
                 if 'rounding' in ename_lower:
                     rounding_amount = eamt
                     rounding_ledger = ename
-                elif any(k in ename_lower for k in ['bank', 'cash', 'sbi', 'hdfc', 'icici', 'axis', 'kotak', 'idfc']):
-                    bank_account = ename
-                    payment_mode = "Cash" if 'cash' in ename_lower else "Bank Transfer"
-                    account_current_balance = current_balance
+                elif any(k in ename_lower for k in ['bank', 'cash', 'sbi', 'hdfc', 'icici', 'axis', 'kotak', 'idfc', 'petty']):
+                    cr_candidates.append((ename, eamt, current_balance, "Cash" if 'cash' in ename_lower or 'petty' in ename_lower else "Bank Transfer"))
                 else:
-                    # Vendor entry: credit side = negative amount
-                    if eamt < 0:
-                        vendor_name = ename
-                        vendor_ledger_amount = abs(eamt)
+                    dr_candidates.append((ename, eamt))
+
+            # Determine Vendor / Expense Ledger and Source Bank Account
+            if dr_candidates:
+                main_dr = dr_candidates[0]
+                vendor_name = main_dr[0]
+                vendor_ledger_amount = abs(main_dr[1])
+            elif ledger_entries:
+                # If all ledgers were bank/cash or dr was missing
+                vendor_name = ledger_entries[0]["ledger_name"]
+                vendor_ledger_amount = abs(ledger_entries[0]["amount"])
+
+            if cr_candidates:
+                def _cr_priority(cr):
+                    name_l = cr[0].lower()
+                    is_bank_cash = any(w in name_l for w in ['cash', 'petty', 'bank', 'hdfc', 'karnataka', 'credit card'])
+                    return (1 if is_bank_cash else 0, abs(cr[1]))
+
+                main_cr = max(cr_candidates, key=_cr_priority)
+                bank_account = main_cr[0]
+                payment_mode = main_cr[3]
+                account_current_balance = main_cr[2]
+            else:
+                # Fallback to any positive entry or last entry
+                pos_entries = [e for e in ledger_entries if e["amount"] > 0]
+                if pos_entries:
+                    bank_account = pos_entries[0]["ledger_name"]
+                    payment_mode = "Cash" if 'cash' in bank_account.lower() or 'petty' in bank_account.lower() else "Bank Transfer"
 
             # ---- Bill allocations ----
             bill_allocations = []
@@ -238,7 +263,19 @@ def parse_tally_json(json_path):
             
         # 1. Base Voucher Identifiers
         payment_date = str(v.get('date', '')).strip()
-        payment_number = str(v.get('vouchernumber', '')).strip()
+        tally_guid = str(v.get('guid', '')).strip()
+        payment_number = str(v.get('vouchernumber') or v.get('voucherkey') or v.get('reference') or tally_guid or '').strip()
+        if not payment_number:
+            import hashlib
+            payment_number = "AUTO-" + hashlib.md5(str(v).encode('utf-8')).hexdigest()[:8]
+        if 'seen_payment_number' not in locals(): seen_payment_number = set()
+        original_no = payment_number
+        counter = 1
+        while payment_number in seen_payment_number:
+            suffix = tally_guid[-4:] if tally_guid and counter == 1 else str(counter)
+            payment_number = f"{original_no}_{suffix}"
+            counter += 1
+        seen_payment_number.add(payment_number)
         voucher_type = str(v.get('vouchertypename', 'Payment')).strip()
         tally_guid = str(v.get('guid', '')).strip()
         narration = str(v.get('narration', '')).strip()
@@ -266,6 +303,9 @@ def parse_tally_json(json_path):
         # Use dict instead of list for deduplication using full_name as key
         cost_centers_dict = {}
 
+        dr_candidates = []
+        cr_candidates = []
+
         # 3. Process Ledger Entries dynamically
         for entry in all_entries:
             if not isinstance(entry, dict):
@@ -289,12 +329,10 @@ def parse_tally_json(json_path):
             if 'rounding' in ename_lower:
                 rounding_amount = eamt
                 rounding_ledger = ename
-                
-            elif any(k in ename_lower for k in ['bank', 'cash', 'sbi', 'hdfc', 'icici', 'axis', 'kotak', 'idfc']):
-                bank_account = ename
-                payment_mode = "Cash" if 'cash' in ename_lower else "Bank Transfer"
-                account_current_balance = current_balance
-                
+            elif eamt > 0:
+                # Credit side (positive) in Payment voucher is the Paid-From Bank or Cash account
+                pm = "Cash" if 'cash' in ename_lower or 'petty' in ename_lower else "Bank Transfer"
+                ref = ""
                 # Dynamic array check for bank allocations
                 bank_allocs = entry.get('bankallocations', [])
                 if not isinstance(bank_allocs, list):
@@ -302,21 +340,45 @@ def parse_tally_json(json_path):
                     
                 if bank_allocs and isinstance(bank_allocs[0], dict):
                     alloc = bank_allocs[0]
-                    reference_number = str(alloc.get('uniquereferencenumber', '')).strip()
-                    if not reference_number:
-                        reference_number = str(alloc.get('instrumentnumber', '')).strip()
+                    ref = str(alloc.get('uniquereferencenumber', '')).strip()
+                    if not ref:
+                        ref = str(alloc.get('instrumentnumber', '')).strip()
+                cr_candidates.append((ename, eamt, current_balance, pm, ref))
             else:
-                # Fallback mapping: If explicit_vendor_name was empty, grab the biggest non-bank ledger
-                if not vendor_name:
-                    if abs(eamt) > vendor_ledger_amount:
-                        vendor_name = ename
-                        vendor_ledger_amount = abs(eamt)
-                
-                # Grab the amount specifically for the vendor ledger
-                if ename == vendor_name:
-                    vendor_ledger_amount = abs(eamt)
-            
-            # 4. Bill Allocations parsing (defensive)
+                # Debit side (negative) in Payment voucher is the Expense or Vendor account
+                dr_candidates.append((ename, eamt))
+
+        # Determine Vendor / Expense Ledger and Source Bank Account
+        if dr_candidates:
+            main_dr = dr_candidates[0]
+            vendor_name = main_dr[0]
+            vendor_ledger_amount = abs(main_dr[1])
+        elif ledger_entries:
+            vendor_name = ledger_entries[0]["ledger_name"]
+            vendor_ledger_amount = abs(ledger_entries[0]["amount"])
+
+        if cr_candidates:
+            # Prioritize genuine Bank / Cash accounts over adjustment credit ledgers (like Salary Advance)
+            def _cr_priority(cr):
+                name_l = cr[0].lower()
+                is_bank_cash = any(w in name_l for w in ['cash', 'petty', 'bank', 'hdfc', 'karnataka', 'credit card'])
+                return (1 if is_bank_cash else 0, abs(cr[1]))
+
+            main_cr = max(cr_candidates, key=_cr_priority)
+            bank_account = main_cr[0]
+            account_current_balance = main_cr[2]
+            payment_mode = main_cr[3]
+            if main_cr[4]:
+                reference_number = main_cr[4]
+        else:
+            pos_entries = [e for e in ledger_entries if e["amount"] > 0]
+            if pos_entries:
+                bank_account = pos_entries[0]["ledger_name"]
+                payment_mode = "Cash" if 'cash' in bank_account.lower() or 'petty' in bank_account.lower() else "Bank Transfer"
+
+        # 4. Bill Allocations parsing (defensive)
+        for entry in all_entries:
+            if not isinstance(entry, dict): continue
             bills = entry.get('billallocations', [])
             if not isinstance(bills, list):
                 bills = [bills] if bills else []
@@ -430,168 +492,482 @@ from modules.zoho_connector import zoho
 # ZOHO BOOKS INTEGRATION
 # ----------------------------------------------------------
 
-# Removed manual get_access_token in favor of ZohoConnector
+import difflib
+from journel.journel_backend import _get_creds, get_access_token
 
-def get_zoho_vendors():
-    """Fetch all vendors from Zoho Books"""
-    resp = zoho.api_call("GET", "/contacts", params={"contact_type": "vendor"})
-    if resp.get("code") == 0:
-        contacts = resp.get("contacts", [])
-        vendor_map = {}
-        for contact in contacts:
-            vendor_map[contact["contact_name"]] = {
-                "vendor_id": contact["contact_id"],
-                "email": contact.get("email", "")
-            }
-        return vendor_map
-    return {}
+def _clean_float(val, default=0.0):
+    if not val: return float(default)
+    if isinstance(val, (int, float)): return float(val)
+    try:
+        s = str(val).split('/')[0]
+        c = re.sub(r'[^0-9.-]', '', s)
+        return float(c) if c else float(default)
+    except:
+        return float(default)
 
-def get_zoho_bills(vendor_id=None):
+def _clean_key(name):
+    return re.sub(r'[^a-z0-9]', '', str(name or '').lower())
+
+def get_zoho_vendors(token=None, use_cache=True):
+    """Fetch all vendors from Zoho Books using SQLite cache first to avoid heavy API usage"""
+    creds = _get_creds()
+    org_id = creds.get("org_id", "")
+    
+    if use_cache and database_manager:
+        cached = database_manager.get_zoho_master_cache("contacts", expected_org_id=org_id)
+        if cached and isinstance(cached, dict):
+            vendors = {}
+            for k, c in cached.items():
+                if isinstance(c, dict) and c.get("contact_type") == "vendor":
+                    v_id = c.get("contact_id")
+                    v_name = c.get("original_name") or k
+                    clean_k = _clean_key(v_name)
+                    info = {"vendor_id": v_id, "email": c.get("email", ""), "contact_name": v_name}
+                    vendors[clean_k] = info
+                    vendors[str(v_name).lower().strip()] = info
+            if vendors:
+                print(f" Loaded {len(vendors)} Zoho vendor contacts from DB cache")
+                return vendors
+
+    if not token:
+        token = get_access_token()
+    vendors = {}
+    page = 1
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    while True:
+        url = f"{creds['base_url']}/contacts"
+        params = {"organization_id": creds["org_id"], "contact_type": "vendor", "page": page, "per_page": 200}
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            data = res.json()
+            if res.status_code == 200 and data.get("code") == 0:
+                contacts_list = data.get("contacts", [])
+                if not contacts_list: break
+                for c in contacts_list:
+                    v_name = c.get("contact_name", "")
+                    clean_k = _clean_key(v_name)
+                    info = {
+                        "vendor_id": c["contact_id"],
+                        "email": c.get("email", ""),
+                        "contact_name": v_name
+                    }
+                    vendors[clean_k] = info
+                    vendors[v_name.lower().strip()] = info
+                page_context = data.get("page_context", {})
+                if not page_context.get("has_more_page", False): break
+                page += 1
+            else:
+                break
+        except Exception:
+            break
+    print(f" Fetched {len(vendors)} Zoho vendor contacts across {page} page(s)")
+    return vendors
+
+def get_zoho_bills(vendor_id=None, token=None):
     """Fetch bills from Zoho Books for a specific vendor"""
-    params = {}
+    creds = _get_creds()
+    if not token:
+        token = get_access_token()
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    params = {"organization_id": creds["org_id"]}
     if vendor_id:
         params["vendor_id"] = vendor_id
         
-    resp = zoho.api_call("GET", "/bills", params=params)
-    if resp.get("code") == 0:
-        bills = resp.get("bills", [])
-        bill_map = {}
-        for bill in bills:
-            bill_map[bill["bill_number"]] = {
-                "bill_id": bill["bill_id"],
-                "balance": float(bill.get("balance", 0)),
-                "total": float(bill.get("total", 0))
-            }
-        return bill_map
+    try:
+        res = requests.get(f"{creds['base_url']}/bills", headers=headers, params=params)
+        data = res.json()
+        if res.status_code == 200 and data.get("code") == 0:
+            bills = data.get("bills", [])
+            bill_map = {}
+            for bill in bills:
+                bill_map[bill["bill_number"]] = {
+                    "bill_id": bill["bill_id"],
+                    "balance": float(bill.get("balance", 0)),
+                    "total": float(bill.get("total", 0))
+                }
+            return bill_map
+    except Exception:
+        pass
     return {}
 
-def get_zoho_bank_accounts():
-    resp = zoho.api_call("GET", "/bankaccounts")
-    if resp.get("code") == 0:
-        accounts = resp.get("bankaccounts", [])
-        account_map = {}
-        for account in accounts:
-            account_map[account["account_name"]] = account["account_id"]
-        return account_map
-    return {}
+def get_zoho_bank_accounts(token=None, use_cache=True):
+    """Fetch bank and cash accounts from SQLite cache first, fallback to Zoho API"""
+    creds = _get_creds()
+    org_id = creds.get("org_id", "")
+    
+    if use_cache and database_manager:
+        cached = database_manager.get_zoho_master_cache("bank_accounts", expected_org_id=org_id)
+        if cached and isinstance(cached, dict):
+            accounts = {}
+            for k, acc_id in cached.items():
+                clean_k = _clean_key(k)
+                accounts[clean_k] = acc_id
+                accounts[str(k).lower().strip()] = acc_id
+            if accounts:
+                print(f" Loaded {len(accounts)} Zoho bank/cash accounts from DB cache")
+                return accounts
 
-def get_zoho_chart_of_accounts():
-    """Fetch Chart of Accounts from Zoho Books to map expense ledger names to account IDs"""
-    resp = zoho.api_call("GET", "/chartofaccounts")
+    if not token:
+        token = get_access_token()
+    accounts = {}
+    page = 1
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    while True:
+        url = f"{creds['base_url']}/bankaccounts"
+        params = {"organization_id": creds["org_id"], "page": page, "per_page": 200}
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            data = res.json()
+            if res.status_code == 200 and data.get("code") == 0:
+                acc_list = data.get("bankaccounts", [])
+                if not acc_list: break
+                for acc in acc_list:
+                    acc_name = acc.get("account_name", "")
+                    clean_k = _clean_key(acc_name)
+                    acc_id = acc.get("account_id")
+                    accounts[clean_k] = acc_id
+                    accounts[acc_name.lower().strip()] = acc_id
+                page_context = data.get("page_context", {})
+                if not page_context.get("has_more_page", False): break
+                page += 1
+            else:
+                break
+        except Exception:
+            break
+    print(f" Fetched {len(accounts)} Zoho bank/cash accounts across {page} page(s)")
+    return accounts
+
+def get_zoho_chart_of_accounts(token=None, use_cache=True):
+    """Fetch Chart of Accounts from SQLite cache first, fallback to Zoho API"""
+    creds = _get_creds()
+    org_id = creds.get("org_id", "")
+    
+    if use_cache and database_manager:
+        cached = database_manager.get_zoho_master_cache("accounts", expected_org_id=org_id)
+        if cached and isinstance(cached, dict):
+            coa_map = {}
+            for k, acc_id in cached.items():
+                clean_k = _clean_key(k)
+                coa_map[clean_k] = acc_id
+                coa_map[str(k).lower().strip()] = acc_id
+            if coa_map:
+                print(f" Loaded {len(coa_map)} Zoho chart of accounts from DB cache")
+                return coa_map
+
+    if not token:
+        token = get_access_token()
     coa_map = {}
-    if resp.get("code") == 0:
-        for acc in resp.get("chartofaccounts", []):
-            name = acc.get("account_name", "").strip()
-            acc_id = acc.get("account_id", "")
-            if name and acc_id:
-                coa_map[name.lower()] = acc_id
+    page = 1
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    while True:
+        url = f"{creds['base_url']}/chartofaccounts"
+        params = {"organization_id": creds["org_id"], "page": page, "per_page": 200}
+        try:
+            res = requests.get(url, headers=headers, params=params)
+            data = res.json()
+            if res.status_code == 200 and data.get("code") == 0:
+                acc_list = data.get("chartofaccounts", [])
+                if not acc_list: break
+                for acc in acc_list:
+                    name = acc.get("account_name", "")
+                    clean_k = _clean_key(name)
+                    acc_id = acc.get("account_id", "")
+                    if name and acc_id:
+                        coa_map[clean_k] = acc_id
+                        coa_map[name.lower().strip()] = acc_id
+                page_context = data.get("page_context", {})
+                if not page_context.get("has_more_page", False): break
+                page += 1
+            else:
+                break
+        except Exception:
+            break
+    print(f" Fetched {len(coa_map)} Zoho chart of accounts across {page} page(s)")
     return coa_map
 
 
-def create_zoho_payment_made(payment_data, vendor_map, bill_map, bank_account_map):
-    """Create a payment made (vendor payment) in Zoho Books"""
-    vendor_name = payment_data.get("vendor_name", "")
-    if vendor_name not in vendor_map:
-        return False, f"Vendor '{vendor_name}' not found in Zoho Books"
+def create_zoho_payment_made(payment_data, vendor_map, bill_map, bank_account_map, token=None):
+    """Create a payment made (vendor payment) in Zoho Books dynamically"""
+    creds = _get_creds()
+    if not token:
+        token = get_access_token()
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    params = {"organization_id": creds["org_id"]}
+
+    vendor_raw = str(payment_data.get("vendor_name") or "").strip()
+    vendor_clean = vendor_raw.lower().strip()
+    vendor_key = _clean_key(vendor_raw)
+
+    vendor_info = vendor_map.get(vendor_key) or vendor_map.get(vendor_clean) if vendor_map else None
+    if not vendor_info and vendor_map:
+        matches = difflib.get_close_matches(vendor_clean, list(vendor_map.keys()), n=1, cutoff=0.70)
+        if matches:
+            vendor_info = vendor_map[matches[0]]
+
+    if not vendor_info:
+        return False, f"Vendor '{vendor_raw}' not found in Zoho Books"
+
+    vendor_id = vendor_info["vendor_id"]
     
-    vendor_id = vendor_map[vendor_name]["vendor_id"]
-    
-    bank_account_name = payment_data.get("bank_account", "")
+    # Resolve Paid-Through Bank/Cash Account (paid_through_account_id)
+    bank_account_name = str(payment_data.get("bank_account") or "").strip()
     account_id = None
-    for acc_name, acc_id in bank_account_map.items():
-        if bank_account_name.lower() in acc_name.lower() or acc_name.lower() in bank_account_name.lower():
-            account_id = acc_id
-            break
-            
+
+    def _match_bank_id(name):
+        if not name or not bank_account_map: return None
+        n_clean = name.lower().strip()
+        n_key = _clean_key(name)
+        acc_id = bank_account_map.get(n_key) or bank_account_map.get(n_clean)
+        if not acc_id and n_clean:
+            matches = difflib.get_close_matches(n_clean, list(bank_account_map.keys()), n=1, cutoff=0.75)
+            if matches:
+                acc_id = bank_account_map[matches[0]]
+        return acc_id
+
+    account_id = _match_bank_id(bank_account_name)
+
+    # If not matched directly, check ledger_entries for genuine bank/cash
+    ledger_entries = payment_data.get("ledger_entries") or []
+    if isinstance(ledger_entries, str):
+        try: ledger_entries = json.loads(ledger_entries)
+        except: ledger_entries = []
+
+    if not account_id and isinstance(ledger_entries, list):
+        for le in ledger_entries:
+            if not isinstance(le, dict): continue
+            lname = str(le.get("ledger_name") or "").strip()
+            e_amt = float(le.get("amount") or 0.0)
+            if e_amt > 0 and 'round' not in lname.lower():
+                acc_id = _match_bank_id(lname)
+                if acc_id:
+                    account_id = acc_id
+                    bank_account_name = lname
+                    break
+
     if not account_id:
-        if bank_account_map:
-            account_id = list(bank_account_map.values())[0]
-        else:
-            return False, "No bank accounts found in Zoho Books"
+        return False, f"Bank/Cash account '{bank_account_name}' not found in Zoho Books"
             
-    date_str = payment_data.get("date", "")
-    if len(date_str) == 8:
-        formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
-    else:
-        formatted_date = datetime.now().strftime("%Y-%m-%d")
+    date_str = str(payment_data.get("date", "")).replace("-", "").strip()
+    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}" if len(date_str) == 8 else datetime.now().strftime("%Y-%m-%d")
         
+    p_num = str(payment_data.get("payment_number") or "").strip()
+    ref_no = p_num if p_num else str(payment_data.get("reference_number") or "").strip()
+    if not ref_no:
+        alloc_bills = [str(a.get("bill_number") or a.get("reference") or "").strip() for a in payment_data.get("bill_allocations", []) if a.get("bill_number") or a.get("reference")]
+        if alloc_bills:
+            ref_no = f"AGST-{'/'.join(dict.fromkeys(alloc_bills))}"[:100]
+
+    pm_raw = str(payment_data.get("payment_mode") or "Bank Transfer").strip()
+    pm_zoho = "Cash" if 'cash' in pm_raw.lower() or 'petty' in pm_raw.lower() else "Bank Transfer"
+
     payload = {
         "vendor_id": vendor_id,
-        "payment_mode": payment_data.get("payment_mode", "cash"),
-        "amount": payment_data.get("amount", 0),
+        "payment_mode": pm_zoho,
+        "amount": _clean_float(payment_data.get("amount"), 0.0),
         "date": formatted_date,
-        "reference_number": payment_data.get("reference_number", ""),
-        "description": payment_data.get("narration", ""),
+        "reference_number": ref_no,
+        "description": str(payment_data.get("narration") or "").strip(),
+        "paid_through_account_id": account_id,
         "account_id": account_id,
         "bills": []
     }
     
-    for allocation in payment_data.get("bill_allocations", []):
-        bill_number = allocation.get("bill_number", "")
-        if bill_number in bill_map:
-            payload["bills"].append({
-                "bill_id": bill_map[bill_number]["bill_id"],
-                "amount_applied": allocation.get("amount", 0)
-            })
+    # Check bill allocations
+    allocations = payment_data.get("bill_allocations") or []
+    if isinstance(allocations, str):
+        try: allocations = json.loads(allocations)
+        except: allocations = []
+
+    if bill_map and isinstance(allocations, list):
+        for allocation in allocations:
+            if not isinstance(allocation, dict): continue
+            bill_number = str(allocation.get("bill_number") or allocation.get("reference") or "").strip()
+            if not bill_number or bill_number.lower() == "on account": continue
+            
+            # Match bill in bill_map
+            matched_bill = bill_map.get(bill_number) or bill_map.get(bill_number.lower())
+            if not matched_bill:
+                b_key = _clean_key(bill_number)
+                matched_bill = bill_map.get(b_key)
+
+            if matched_bill:
+                payload["bills"].append({
+                    "bill_id": matched_bill["bill_id"],
+                    "amount_applied": _clean_float(allocation.get("amount"), 0.0)
+                })
             
     try:
-        resp = zoho.api_call("POST", "/vendorpayments", payload={"JSONString": json.dumps(payload)})
-        if resp.get("code") == 0:
+        url = f"{creds['base_url']}/vendorpayments"
+        res = requests.post(url, headers=headers, params=params, json=payload)
+        data = res.json()
+        if data.get("code") == 0:
             return True, None
-        else:
-            error_msg = resp.get("message", "Error")
-            return False, error_msg
+        return False, data.get("message", "Error creating vendor payment")
     except Exception as e:
-        return False, str(e)
+        return False, f"Connection error: {e}"
 
-def create_zoho_expense(payment_data, vendor_map, bank_account_map, coa_map=None):
-    """Create a standalone expense in Zoho Books using the expense ledger name from Tally."""
-    
-    # Identify the non-bank ledger as the expense account (vendor_name is set from Tally ledger breakdown)
-    expense_ledger_name = payment_data.get("vendor_name", "")
-    
-    # Try to find it in Zoho Chart of Accounts
-    account_id = None
-    if coa_map:
-        account_id = coa_map.get(expense_ledger_name.lower())
-        if not account_id:
-            # Partial match fallback
-            for coa_name, coa_id in coa_map.items():
-                if expense_ledger_name.lower() in coa_name or coa_name in expense_ledger_name.lower():
-                    account_id = coa_id
+
+def create_zoho_expense(payment_data, vendor_map, bank_account_map, coa_map=None, token=None):
+    """Create a standalone expense in Zoho Books dynamically using Chart of Accounts"""
+    if not payment_data or not isinstance(payment_data, dict):
+        return False, "Invalid expense data format"
+
+    creds = _get_creds()
+    if not token:
+        token = get_access_token()
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    params = {"organization_id": creds["org_id"]}
+
+    raw_vendor = str(payment_data.get("vendor_name") or payment_data.get("from_account") or "").strip()
+    bank_account_name = str(payment_data.get("bank_account") or payment_data.get("to_account") or "").strip()
+
+    # Parse ledger_entries if present
+    ledger_entries = payment_data.get("ledger_entries") or []
+    if isinstance(ledger_entries, str):
+        try: ledger_entries = json.loads(ledger_entries)
+        except: ledger_entries = []
+    if not isinstance(ledger_entries, list): ledger_entries = []
+
+    known_bank_cash = set([k.lower() for k in bank_account_map.keys()]) if bank_account_map else set()
+    known_bank_cash.update(['cash', 'petty cash', 'cash account', 'cash in hand', 'cash-in-hand', 'bank', 'bank account', 'bank accounts'])
+    if bank_account_name: known_bank_cash.add(bank_account_name.lower())
+
+    # Detect genuine Paid-Through Bank/Cash account:
+    # Check bank_account field first, then scan ledger_entries for recognized bank/cash
+    paid_through_id = None
+    resolved_bank_name = bank_account_name
+
+    def _match_bank_id(name):
+        if not name or not bank_account_map: return None
+        n_clean = name.lower().strip()
+        n_key = _clean_key(name)
+        acc_id = bank_account_map.get(n_key) or bank_account_map.get(n_clean)
+        if not acc_id and n_clean:
+            matches = difflib.get_close_matches(n_clean, list(bank_account_map.keys()), n=1, cutoff=0.75)
+            if matches:
+                acc_id = bank_account_map[matches[0]]
+        return acc_id
+
+    paid_through_id = _match_bank_id(bank_account_name)
+
+    # If not matched directly, inspect credit entries inside ledger_entries
+    if not paid_through_id and ledger_entries:
+        for le in ledger_entries:
+            if not isinstance(le, dict): continue
+            lname = str(le.get("ledger_name") or "").strip()
+            e_amt = float(le.get("amount") or 0.0)
+            if e_amt > 0 and 'round' not in lname.lower(): # Credit side
+                acc_id = _match_bank_id(lname)
+                if acc_id:
+                    paid_through_id = acc_id
+                    resolved_bank_name = lname
                     break
 
-    if not account_id:
-        return False, f"Expense account '{expense_ledger_name}' not found in Zoho Chart of Accounts"
-    
-    # Identify paid_through_account_id (bank/cash account)
-    bank_account_name = payment_data.get("bank_account", "")
-    paid_through_id = None
-    for acc_name, acc_id in bank_account_map.items():
-        if bank_account_name.lower() in acc_name.lower() or acc_name.lower() in bank_account_name.lower():
-            paid_through_id = acc_id
-            break
-    
     if not paid_through_id:
-        paid_through_id = list(bank_account_map.values())[0] if bank_account_map else None
+        return False, f"Bank/Cash account '{bank_account_name}' not found in Zoho Books"
 
-    date_str = payment_data.get("date", "")
+    bank_clean = resolved_bank_name.lower().strip()
+    bank_key = _clean_key(resolved_bank_name)
+
+    target_items = []
+    for le in ledger_entries:
+        if not isinstance(le, dict): continue
+        lname = str(le.get("ledger_name") or "").strip()
+        e_amt = float(le.get("amount") or 0.0)
+        if 'rounding' in lname.lower():
+            continue
+        
+        l_clean = lname.lower().strip()
+        l_key = _clean_key(lname)
+        # Skip the primary paid_through bank/cash ledger
+        if l_clean == bank_clean or l_key == bank_key:
+            continue
+
+        target_items.append((lname, abs(e_amt)))
+
+    date_str = str(payment_data.get("date", "")).replace("-", "").strip()
     formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}" if len(date_str) == 8 else datetime.now().strftime("%Y-%m-%d")
     
-    payload = {
-        "account_id": account_id,
-        "paid_through_account_id": paid_through_id,
-        "amount": payment_data.get("amount", 0),
-        "date": formatted_date,
-        "reference_number": payment_data.get("reference_number", ""),
-        "description": payment_data.get("narration", "")
-    }
-    
-    resp = zoho.api_call("POST", "/expenses", payload={"JSONString": json.dumps(payload)})
-    if resp.get("code") == 0:
-        return True, None
+    # Use formatted payment number (e.g. PY/708/18-19) as the clean reference_number
+    p_num = str(payment_data.get("payment_number") or "").strip()
+    ref_no = p_num if p_num else str(payment_data.get("reference_number") or "").strip()
+    narration = str(payment_data.get("narration") or "").strip()
+
+    # Case A: Multi-ledger expense (Itemized line_items — matches reference 3615610000000325975)
+    if len(target_items) > 1:
+        line_items = []
+        total_expense_amount = 0.0
+        missing_ledgers = []
+
+        for lname, lamt in target_items:
+            l_clean = lname.lower().strip()
+            l_key = _clean_key(lname)
+            acc_id = None
+            if coa_map:
+                acc_id = coa_map.get(l_key) or coa_map.get(l_clean)
+                if not acc_id:
+                    matches = difflib.get_close_matches(l_clean, list(coa_map.keys()), n=1, cutoff=0.60)
+                    if matches:
+                        acc_id = coa_map[matches[0]]
+            
+            if not acc_id:
+                missing_ledgers.append(lname)
+            else:
+                line_items.append({
+                    "account_id": acc_id,
+                    "amount": lamt,
+                    "description": narration
+                })
+                total_expense_amount += lamt
+
+        if missing_ledgers:
+            return False, f"Expense account(s) not found in Zoho Chart of Accounts: {', '.join(missing_ledgers)}"
+
+        payload = {
+            "paid_through_account_id": paid_through_id,
+            "amount": total_expense_amount,
+            "date": formatted_date,
+            "reference_number": ref_no,
+            "description": narration,
+            "line_items": line_items
+        }
+
+    # Case B: Single ledger expense
     else:
-        return False, resp.get("message", "Error")
+        target_name = target_items[0][0] if target_items else raw_vendor
+        target_amt = target_items[0][1] if target_items else _clean_float(payment_data.get("amount"), 0.0)
+
+        target_clean = target_name.lower().strip()
+        target_key = _clean_key(target_name)
+        account_id = None
+        if coa_map:
+            account_id = coa_map.get(target_key) or coa_map.get(target_clean)
+            if not account_id and target_clean:
+                matches = difflib.get_close_matches(target_clean, list(coa_map.keys()), n=1, cutoff=0.60)
+                if matches:
+                    account_id = coa_map[matches[0]]
+
+        if not account_id:
+            return False, f"Expense account '{target_name}' not found in Zoho Chart of Accounts"
+
+        payload = {
+            "account_id": account_id,
+            "paid_through_account_id": paid_through_id,
+            "amount": target_amt,
+            "date": formatted_date,
+            "reference_number": ref_no,
+            "description": narration
+        }
+    
+    try:
+        url = f"{creds['base_url']}/expenses"
+        res = requests.post(url, headers=headers, params=params, json=payload)
+        data = res.json()
+        if data.get("code") == 0:
+            return True, None
+        return False, data.get("message", "Error creating expense")
+    except Exception as e:
+        return False, f"Connection error: {e}"
 
 
 def sync_payments_to_zoho(selected_payments=None, from_date="20250401", to_date="20250430", limit=None, company_name=None):
@@ -603,38 +979,75 @@ def sync_payments_to_zoho(selected_payments=None, from_date="20250401", to_date=
     if not payments:
         return {"status": "error", "message": "No payments to sync"}
         
-    print(" Fetching Zoho Books data...")
-    vendor_map = get_zoho_vendors()
-    bank_account_map = get_zoho_bank_accounts()
-    coa_map = get_zoho_chart_of_accounts()
+    print(" Fetching Zoho Books data dynamically...")
+    token = get_access_token()
+    vendor_map = get_zoho_vendors(token)
+    bank_account_map = get_zoho_bank_accounts(token)
+    coa_map = get_zoho_chart_of_accounts(token)
     
-    results = {"total": len(payments), "success": 0, "failed": 0, "errors": []}
+    results = {"total": len(payments), "success": 0, "failed": 0, "errors": [], "synced_items": []}
      
     for payment in payments:
-        vendor_name = payment.get("vendor_name", "")
+        raw_v = str(payment.get("vendor_name") or "").strip()
+        v_clean = raw_v.lower().strip()
+        v_key = _clean_key(raw_v)
         
-        # KEY LOGIC: Check if the ledger name (vendor_name) exists as a vendor in Zoho.
-        # If YES → it's a Vendor Payment (paying off a bill).
-        # If NO  → it's a Direct Expense (expense ledger, not a vendor).
-        if vendor_name in vendor_map:
-            vendor_id = vendor_map[vendor_name]["vendor_id"]
-            bill_map = get_zoho_bills(vendor_id)
-            success, error = create_zoho_payment_made(payment, vendor_map, bill_map, bank_account_map)
+        vendor_info = vendor_map.get(v_key) or vendor_map.get(v_clean) if vendor_map else None
+        if not vendor_info and vendor_map:
+            matches = difflib.get_close_matches(v_clean, list(vendor_map.keys()), n=1, cutoff=0.70)
+            if matches:
+                vendor_info = vendor_map[matches[0]]
+
+        # Check if vendor_name exists in vendor_map
+        if vendor_info:
+            vendor_id = vendor_info["vendor_id"]
+            bill_map = get_zoho_bills(vendor_id, token)
+            success, error = create_zoho_payment_made(payment, vendor_map, bill_map, bank_account_map, token)
         else:
-            success, error = create_zoho_expense(payment, vendor_map, bank_account_map, coa_map)
+            success, error = create_zoho_expense(payment, vendor_map, bank_account_map, coa_map, token)
             
         if success:
             results["success"] += 1
+            results["synced_items"].append({
+                "payment_number": payment.get("payment_number", ""),
+                "vendor_name": payment.get("vendor_name", ""),
+                "date": payment.get("date", ""),
+                "amount": payment.get("amount", 0)
+            })
+            if database_manager:
+                try:
+                    database_manager.update_payment_made_status(
+                        payment.get("payment_number"),
+                        payment.get("date"),
+                        zoho_payment_id="SYNCED",
+                        zoho_status="synced",
+                        zoho_error=""
+                    )
+                except Exception:
+                    pass
         else:
             results["failed"] += 1
             results["errors"].append({
                 "payment_number": payment.get("payment_number", ""),
-                "vendor": vendor_name,
+                "vendor": payment.get("vendor_name", ""),
+                "date": payment.get("date", ""),
+                "amount": payment.get("amount", 0),
                 "error": error
             })
+            if database_manager:
+                try:
+                    database_manager.update_payment_made_status(
+                        payment.get("payment_number"),
+                        payment.get("date"),
+                        zoho_payment_id=None,
+                        zoho_status="failed",
+                        zoho_error=str(error or "Sync failed")
+                    )
+                except Exception:
+                    pass
             
     results["status"] = "success"
-    results["message"] = f"Synced {results['success']} out of {results['total']} payments"
+    results["message"] = f"Synced {results['success']} out of {results['total']} payments/expenses"
     return results
 
 def get_all_payments_data(from_date="20250401", to_date="20250430", limit=None, company_name=None):
@@ -658,6 +1071,7 @@ def get_all_payments_data(from_date="20250401", to_date="20250430", limit=None, 
                 "amount": payment.get("amount", 0) or 0,
                 "reference_number": payment.get("reference_number", ""),
                 "against_reference": payment.get("against_reference", ""),
+                "payment_category": payment.get("payment_category", ""),
                 "narration": payment.get("narration", ""),
                 "bill_allocations": json.dumps(payment.get("bill_allocations", [])),
                 "ledger_entries": json.dumps(payment.get("ledger_entries", [])),
@@ -715,6 +1129,7 @@ def get_all_payments_data_day_by_day(from_date="20250401", to_date="20250430", l
                 "amount": payment.get("amount", 0) or 0,
                 "reference_number": payment.get("reference_number", ""),
                 "against_reference": payment.get("against_reference", ""),
+                "payment_category": payment.get("payment_category", ""),
                 "narration": payment.get("narration", ""),
                 "bill_allocations": json.dumps(payment.get("bill_allocations", []), ensure_ascii=False),
                 "ledger_entries": json.dumps(payment.get("ledger_entries", []), ensure_ascii=False),
@@ -1022,12 +1437,22 @@ def sync_payments_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
         # Build and submit ONE vendor payment (accumulated)
         total_payment = prev_sum + curr_sum
         if total_payment > 0 and bill_lines:
+            ref_no = (p.get("reference_number") or "").strip()
+            if not ref_no:
+                distinct_refs = []
+                for x in bill_lines:
+                    r = str(x.get("ref", "")).strip()
+                    if r and r not in distinct_refs:
+                        distinct_refs.append(r)
+                if distinct_refs:
+                    ref_no = f"AGST-{'/'.join(distinct_refs)}"[:100]
+
             payload = {
                 "vendor_id": vendor_id,
                 "payment_mode": "banktransfer" if (p.get("payment_mode") or "").lower().startswith("bank") else "cash",
                 "amount": round(total_payment, 2),
                 "date": payment_date_iso or datetime.now().strftime("%Y-%m-%d"),
-                "reference_number": (p.get("reference_number") or "").strip(),
+                "reference_number": ref_no,
                 "description": (p.get("narration") or "").strip(),
                 "bills": [{"bill_id": x["bill_id"], "amount_applied": round(_safe_float(x["amount_applied"]), 2)} for x in bill_lines],
             }

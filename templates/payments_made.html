@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -6,8 +6,61 @@
     <title>Payments Made - Tally to Zoho Migration</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
-        {% include '_sidebar_styles.html' %}
+    <!-- SheetJS (xlsx) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+    {% include '_sidebar_styles.html' %}
     {% include '_zb_theme.html' %}
+
+    <style>
+        .month-pill {
+            display: inline-block;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 20px;
+            border: 1px solid #dee2e6;
+            background: #fff;
+            color: #495057;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .month-pill:hover {
+            background: #e9ecef;
+            border-color: #ced4da;
+            color: #212529;
+        }
+        .month-pill.active {
+            background: #0288d1;
+            border-color: #0288d1;
+            color: #fff !important;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(2,136,209,0.3);
+        }
+        .kpi-card {
+            border-radius: 12px;
+            border-left: 4px solid #5e35b1;
+            background: #fff;
+            padding: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            height: 100%;
+        }
+        .kpi-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6c757d;
+            margin-bottom: 4px;
+        }
+        .kpi-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #212529;
+        }
+    </style>
 </head>
 <body>
     {% set active_page = 'payments_made' %}
@@ -15,7 +68,7 @@
         {% include '_sidebar.html' %}
         <main class="main">
             {% set page_title = 'Payments Made' %}
-            {% set page_subtitle = 'Import payments made and sync to Zoho.' %}
+            {% set page_subtitle = 'Import payments made, review expenses vs vendor payments, and sync to Zoho Books.' %}
             {% set topbar_actions = '
               <button onclick="syncZoho()" class="btn btn-outline-primary btn-sm d-flex align-items-center">
                 <i class="bi bi-arrow-repeat me-2"></i> Sync to Zoho
@@ -31,167 +84,231 @@
 
             {% set steps_title = 'Payments Made: Recommended Steps' %}
             {% set steps = [
-              'Confirm Vendors + Ledgers are synced to Zoho.',
-              'Import payments made XML into the active DB.',
-              'Review payment mode/account mapping.',
-              'Sync to Zoho and download failures for manual correction.'
+              'Confirm Vendors + Ledgers are synced to Zoho Books.',
+              'Import payments made from Tally or upload JSON into DB.',
+              'Review month totals and inspect vendor payments vs expenses.',
+              'Sync to Zoho Books and reconcile with live Zoho records.'
             ] %}
             {% include '_steps_card.html' %}
-
-
 
             <!-- LIVE CONSOLE -->
             <div id="paymentsConsoleCard" class="content-card p-3 mb-4" style="display:none;">
               <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
-                <div class="fw-semibold"><i class="bi bi-terminal me-2"></i>Console</div>
-                <div class="small text-muted" id="paymentsConsoleStatus">Idle</div>
+                <div class="fw-semibold text-dark"><i class="bi bi-terminal me-2"></i>Sync Console</div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-secondary" id="paymentsConsoleStatus">Idle</span>
+                    <button id="paymentsConsoleStopBtn" onclick="stopPaymentsJob()" class="btn btn-outline-danger btn-sm" disabled>
+                        <i class="bi bi-stop-circle me-1"></i> Stop
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="clearPaymentsConsole()" title="Clear Console">
+                        <i class="bi bi-trash3 me-1"></i> Clear
+                    </button>
+                </div>
               </div>
-              <pre id="paymentsConsole" class="mb-0 p-3 rounded-3 bg-dark text-light small" style="max-height: 260px; overflow:auto; white-space: pre-wrap;"></pre>
-              <div class="d-flex justify-content-end mt-2">
-                <button class="btn btn-sm btn-outline-secondary" onclick="clearPaymentsConsole()">
-                  <i class="bi bi-trash3 me-1"></i> Clear
-                </button>
-              </div>
+              <pre id="paymentsConsole" class="mb-0 p-3 rounded-3 bg-dark text-light small" style="max-height: 260px; overflow:auto; white-space: pre-wrap; font-family: SFMono-Regular, Menlo, Monaco, Consolas, monospace;"></pre>
             </div>
-
-    <!-- NAVBAR -->
-    <nav class="navbar navbar-expand-lg navbar-light sticky-top px-4">
-        <a class="navbar-brand d-flex align-items-center" href="#">
-            <i class="bi bi-wallet2 text-primary fs-3 me-2"></i>
-            <span class="fw-bold text-primary">TallySoft</span>
-        </a>
-        <div class="collapse navbar-collapse ms-4">
-            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/ledgers"><i class="bi bi-journal-text me-1"></i> Ledgers</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/items"><i class="bi bi-box-seam me-1"></i> Items</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/journals"><i class="bi bi-journal-bookmark me-1"></i> Journals</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/invoices"><i class="bi bi-receipt me-1"></i> Invoices</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/bills"><i class="bi bi-file-earmark-text me-1"></i> Bills</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/receipts"><i class="bi bi-cash-coin me-1"></i> Payment Received</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link active" href="/payments_made"><i class="bi bi-cash-stack me-1"></i> Payments Made</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/contra"><i class="bi bi-arrow-left-right me-1"></i> Contra</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/credit_note"><i class="bi bi-file-earmark-minus me-1"></i> Credit Note</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/debit_note"><i class="bi bi-file-earmark-plus me-1"></i> Debit Note</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/sales_orders"><i class="bi bi-cart-check me-1"></i> Sales Orders</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/purchase_orders"><i class="bi bi-bag-check me-1"></i> Purchase Orders</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="/opening-balance"><i class="bi bi-bank me-1"></i> Opening Balance</a>
-                </li>
-            </ul>
-        </div>
-    </nav>
 
     <div class="container-fluid p-0">
-
-        <!-- HEADER & ACTIONS -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h4 class="fw-bold mb-1">Payments Made</h4>
-                <p class="text-muted small mb-0">View and sync vendor payments from Tally to Zoho Books</p>
-            </div>
-            <div class="d-flex gap-2">
-                <button id="syncBtn" onclick="syncZoho()" class="btn btn-outline-danger d-flex align-items-center">
-                    <i class="bi bi-arrow-repeat me-2"></i> Sync to Zoho
-                </button>
-                <input type="file" id="jsonUpload" accept=".json" style="display: none;" onchange="uploadJson(event)">
-                <button id="uploadBtn" onclick="document.getElementById('jsonUpload').click()" class="btn btn-warning d-flex align-items-center">
-                    <i class="bi bi-upload me-2"></i> Upload JSON
-                </button>
-                <button id="importBtn" onclick="fetchData()" class="btn btn-danger d-flex align-items-center">
-                    <i class="bi bi-cloud-download me-2"></i> Import from Tally
-                </button>
+        
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 1 — GET DATA (Import from Tally or Upload a file)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#5e35b1 !important;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#5e35b1;font-size:13px;">STEP 1</span>
+                    <span class="fw-semibold">Get Data</span>
+                    <span class="text-muted small">— Import payments made from Tally or upload a JSON file</span>
+                </div>
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">From Date</label>
+                        <input type="date" id="fromDate" class="form-control" value="2025-04-01" onchange="applyFilters()">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">To Date</label>
+                        <input type="date" id="toDate" class="form-control" value="2025-04-30" onchange="applyFilters()">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">Limit (optional)</label>
+                        <input type="number" id="limitInput" class="form-control" placeholder="All">
+                    </div>
+                    <div class="col-md-2">
+                        <button onclick="fetchData()" id="importBtn" class="btn btn-primary w-100">
+                            <i class="bi bi-cloud-download me-1"></i> Import Tally
+                        </button>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="file" id="jsonUpload" accept=".json" style="display:none" onchange="uploadJson(event)">
+                        <button onclick="document.getElementById('jsonUpload').click()" id="uploadBtn" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-upload me-1"></i> Upload JSON
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <!-- DATE RANGE SELECTOR -->
-        <div class="content-card mb-4 p-3">
-            <div class="row g-3 align-items-end">
-                <div class="col-md-3">
-                    <label class="form-label small fw-bold">From Date</label>
-                    <input type="date" id="fromDate" class="form-control" value="2025-04-01">
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 2 — REVIEW (Filter by month, see totals & status)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#0288d1 !important;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#0288d1;font-size:13px;">STEP 2</span>
+                    <span class="fw-semibold">Review &amp; Filter</span>
+                    <span class="text-muted small">— Filter by month, split expenses, check totals, select payments</span>
+                    <span id="activeMonthBadge" class="badge bg-primary ms-2" style="display:none;"></span>
+                    <button onclick="openMonthlyReconciliationModal()" class="btn btn-sm btn-outline-primary fw-bold ms-auto" title="Check month-by-month total amount matching between Tally and Zoho Books">
+                        <i class="bi bi-bar-chart-steps me-1"></i> Monthly Amount Reconciliation
+                    </button>
                 </div>
-                <div class="col-md-3">
-                    <label class="form-label small fw-bold">To Date</label>
-                    <input type="date" id="toDate" class="form-control" value="2025-04-30">
+
+                <!-- Month Quick Filter Bar — Compact Year + Month Selector -->
+                <div class="d-flex align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border" id="monthPillsRow">
+                    <span class="text-muted small fw-bold text-nowrap ms-1"><i class="bi bi-calendar3 me-1"></i>Filter Month:</span>
+                    
+                    <select id="yearPillSelect" class="form-select form-select-sm border-secondary fw-semibold text-primary" style="width: auto; min-width: 120px;" onchange="onYearPillSelectChange(this.value)">
+                        <option value="ALL">All Years</option>
+                    </select>
+
+                    <button id="allMonthsPillBtn" class="month-pill fw-bold flex-shrink-0 active" onclick="quickMonth('ALL')">ALL (All Months)</button>
+
+                    <div id="monthPillsContainer" class="d-flex align-items-center gap-1 overflow-auto flex-grow-1 py-1" style="white-space: nowrap; scrollbar-width: thin;">
+                        <!-- Dynamic Month Pills inserted here -->
+                    </div>
+
+                    <button class="btn btn-sm btn-outline-secondary text-nowrap flex-shrink-0 ms-1" onclick="clearMonthFilter()">
+                        <i class="bi bi-x-circle me-1"></i>Clear
+                    </button>
                 </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">Limit (optional)</label>
-                    <input type="number" id="limitInput" class="form-control" placeholder="All">
+
+                <!-- SPLIT ACTIONS & TABS -->
+                <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+                    <ul class="nav nav-tabs mb-0 border-bottom-0" id="paymentsTabs" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active fw-bold" id="all-tab" data-bs-toggle="tab" data-bs-target="#all-pane" type="button" role="tab" onclick="switchCategoryTab('all')">All Payments (<span id="allCount">0</span>)</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link fw-bold" id="vendor-tab" data-bs-toggle="tab" data-bs-target="#vendor-pane" type="button" role="tab" onclick="switchCategoryTab('vendor')">Vendor Payments (<span id="vendorCount">0</span>)</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link fw-bold text-warning" id="expense-tab" data-bs-toggle="tab" data-bs-target="#expense-pane" type="button" role="tab" onclick="switchCategoryTab('expense')">Expenses (<span id="expenseCount">0</span>)</button>
+                        </li>
+                    </ul>
+                    <button onclick="splitExpenses()" id="splitBtn" class="btn btn-sm btn-outline-warning fw-semibold">
+                        <i class="bi bi-diagram-2 me-1"></i> Split Expenses Auto
+                    </button>
                 </div>
-                <div class="col-md-4">
-                    <button onclick="fetchData()" class="btn btn-secondary w-100">
-                        <i class="bi bi-funnel me-2"></i> Apply Filter
+
+                <!-- KPI Cards (4 Cards: Total, Amount, Synced, Pending) -->
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#5e35b1">
+                            <div class="kpi-label">Total Payments</div>
+                            <div class="kpi-value" id="total-payments">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#43a047">
+                            <div class="kpi-label">Total Amount Paid</div>
+                            <div class="kpi-value text-success" id="total-amount">₹0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#2e7d32">
+                            <div class="kpi-label"><i class="bi bi-check-circle me-1 text-success"></i>Synced to Zoho</div>
+                            <div class="kpi-value text-success" id="synced-count">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#ed6c02">
+                            <div class="kpi-label"><i class="bi bi-clock me-1 text-warning"></i>Pending Sync</div>
+                            <div class="kpi-value text-warning" id="pending-count">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 3 — SYNC TO ZOHO
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#2e7d32 !important;">
+            <div class="p-3 d-flex align-items-center flex-wrap gap-3">
+                <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
+                <span class="fw-semibold">Sync to Zoho Books</span>
+                <div class="d-flex gap-2 ms-auto flex-wrap">
+                    <button onclick="downloadSyncErrorsExcel()" class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" title="Download Failed Payments Report">
+                        <i class="bi bi-file-earmark-excel"></i> Download Error Excel
+                    </button>
+                    <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1" disabled>
+                        <i class="bi bi-cloud-upload"></i> Sync Selected
+                    </button>
+                    <button onclick="syncFilteredMonth()" id="syncMonthBtn" class="btn btn-outline-success btn-sm d-flex align-items-center gap-1">
+                        <i class="bi bi-calendar2-check"></i> Sync Filtered Range
+                    </button>
+                    <button onclick="syncZoho()" id="syncBtn" class="btn btn-dark btn-sm d-flex align-items-center gap-1">
+                        <i class="bi bi-arrow-repeat"></i> Sync All
                     </button>
                 </div>
             </div>
         </div>
 
-        
-        <!-- SPLIT ACTIONS & TABS -->
-        <div class="mb-4">
-            <button onclick="splitExpenses()" id="splitBtn" class="btn btn-warning mb-3">
-                <i class="bi bi-diagram-2 me-2"></i> Split Expenses
-            </button>
-            <ul class="nav nav-tabs" id="paymentsTabs" role="tablist">
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link active fw-bold" id="vendor-tab" data-bs-toggle="tab" data-bs-target="#vendor-pane" type="button" role="tab" onclick="activeTab='vendor'; renderPayments()">Vendor Payments (<span id="vendorCount">0</span>)</button>
-                </li>
-                <li class="nav-item" role="presentation">
-                    <button class="nav-link fw-bold text-warning" id="expense-tab" data-bs-toggle="tab" data-bs-target="#expense-pane" type="button" role="tab" onclick="activeTab='expense'; renderPayments()">Expenses (<span id="expenseCount">0</span>)</button>
-                </li>
-            </ul>
-        </div>
-        <!-- KPI CARDS -->
-        <div class="row g-3 mb-4">
-            <div class="col-md-6">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Payments Made</div>
-                    <div class="kpi-value" id="total-payments">0</div>
+        <!-- LIVE SYNC CONSOLE (Payments Made) -->
+        <div id="paymentsSyncConsoleCard" class="content-card p-3 mb-3" style="display:none;">
+            <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+                <div class="fw-semibold text-dark">
+                    <i class="bi bi-terminal me-2"></i>Live Sync Console
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-secondary" id="paymentsSyncConsoleStatus">idle</span>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="clearPaymentsSyncConsole()" title="Clear Console">
+                        <i class="bi bi-trash3 me-1"></i> Clear
+                    </button>
                 </div>
             </div>
-            <div class="col-md-6">
-                <div class="kpi-card" style="border-color: #c62828;">
-                    <div class="kpi-label">Total Amount Paid</div>
-                    <div class="kpi-value text-danger" id="total-amount">0</div>
-                </div>
+            <pre id="paymentsSyncConsole" class="mb-0 p-3 rounded-3 bg-dark text-light small" style="max-height: 260px; overflow:auto; white-space: pre-wrap; font-family: SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></pre>
+        </div>
+
+        <!-- SELECTION STATUS BAR -->
+        <div id="selectionBar" class="alert alert-primary d-flex align-items-center justify-content-between py-2 px-3 mb-3 shadow-sm border" style="display:none; border-radius:10px;">
+            <span><i class="bi bi-check2-square me-2 text-primary fs-5"></i><strong id="selectedCount">0</strong> payment(s)/expense(s) selected</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button class="btn btn-sm btn-success fw-semibold" onclick="markSelectedSynced('synced')" title="Mark selected payments as Synced in Database">
+                    <i class="bi bi-check-circle-fill me-1"></i> Mark as Synced (Manual)
+                </button>
+                <button class="btn btn-sm btn-outline-secondary fw-semibold" onclick="markSelectedSynced('pending')" title="Mark selected payments as Pending">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> Mark as Pending
+                </button>
+                <button class="btn btn-sm btn-primary" onclick="insertSelected()">
+                    <i class="bi bi-cloud-upload me-1"></i> Sync to Zoho API
+                </button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(true)">Select All</button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(false)">Clear</button>
             </div>
         </div>
 
         <!-- TABLE -->
-              <!-- FIELD MAPPING: hidden file input -->
-      <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
+        <!-- FIELD MAPPING: hidden file input -->
+        <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
 
-<div class="content-card">
+        <div class="content-card">
             <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div class="input-group" style="max-width: 300px;">
-                    <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search payments..." onkeyup="handleSearch()">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="input-group" style="max-width: 250px;">
+                        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search payments..." onkeyup="applyFilters()">
+                    </div>
+                    <select id="zohoStatusFilter" class="form-select form-select-sm border-secondary fw-semibold" style="width: auto;" onchange="applyFilters()">
+                        <option value="ALL">All Zoho Statuses</option>
+                        <option value="SYNCED">✓ Synced to Zoho</option>
+                        <option value="PENDING">⏳ Pending Sync</option>
+                    </select>
                 </div>
                 <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1" onclick="exportToExcel()" title="Export Payments Made to Excel">
+                        <i class="bi bi-file-earmark-excel" style="color:#217346;"></i> Export Excel
+                    </button>
                     <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
                       onclick="document.getElementById('fmZohoFieldsInput').click()"
                       title="Upload Zoho Books sample XLSX or CSV">
@@ -208,25 +325,27 @@
                 </div>
             </div>
             <div id="fmStatusBar" class="px-3 py-1 small" style="display:none"></div>
-</div>
-            </div>
             <div class="table-responsive" style="max-height: 600px;">
                 <table class="table table-hover align-middle mb-0">
-                    <thead class="sticky-top">
+                    <thead class="sticky-top" style="background:#f8fafc;">
                         <tr>
+                            <th style="width:40px;">
+                                <input type="checkbox" id="selectAllChk" class="form-check-input" title="Select / Deselect All" onchange="selectAllVisible(this.checked)">
+                            </th>
                             <th>Payment #</th>
                             <th>Date</th>
-                            <th>Vendor</th>
+                            <th>Vendor / Expense Account</th>
                             <th>Payment Mode</th>
                             <th class="text-end">Amount</th>
+                            <th class="text-center">Zoho Sync Status</th>
                             <th class="text-center">Action</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody">
                         <tr>
-                            <td colspan="6" class="text-center py-5 text-muted">
+                            <td colspan="8" class="text-center py-5 text-muted">
                                 <i class="bi bi-cash-stack fs-1 mb-2"></i><br>
-                                Click "Import Payments Made" to fetch data from Tally
+                                Click "Import Tally" or "Upload JSON" to view payments made
                             </td>
                         </tr>
                     </tbody>
@@ -244,6 +363,154 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" id="paymentDetails"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MONTHLY RECONCILIATION MODAL -->
+    <div class="modal fade" id="monthlyReconciliationModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable" style="max-width: 90vw;">
+            <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+                <div class="modal-header text-white d-flex align-items-center justify-content-between" style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); border-radius: 16px 16px 0 0;">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-bar-chart-steps fs-4"></i>
+                        <div>
+                            <h5 class="modal-title fw-bold mb-0">Payments Made Monthly Reconciliation</h5>
+                            <span class="small opacity-75">Compare month-by-month totals between Tally &amp; Zoho Books</span>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+
+                <div class="modal-body p-4 bg-light">
+                    <!-- Live Connection Status Alert -->
+                    <div id="reconLiveStatusAlert" class="alert alert-info border-0 shadow-sm d-flex align-items-center justify-content-between py-2 px-3 mb-3" style="border-radius: 10px;">
+                        <span id="reconLiveStatusText"><i class="bi bi-cloud-check-fill me-2 fs-5"></i>Connecting to Zoho Books...</span>
+                        <button class="btn btn-sm btn-outline-primary fw-bold" onclick="loadMonthlyReconciliationData(true)">
+                            <i class="bi bi-arrow-clockwise me-1"></i> Refresh Live Zoho
+                        </button>
+                    </div>
+
+                    <!-- Summary KPI Cards -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-3">
+                            <div class="p-3 bg-white rounded-3 border shadow-sm text-center">
+                                <div class="text-muted small fw-bold">TOTAL TALLY PAYMENTS</div>
+                                <div class="fs-4 fw-bold text-primary" id="reconTotalTally">₹0.00</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="p-3 bg-white rounded-3 border shadow-sm text-center">
+                                <div class="text-muted small fw-bold">TOTAL ZOHO PAYMENTS</div>
+                                <div class="fs-4 fw-bold text-success" id="reconTotalZoho">₹0.00</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="p-3 bg-white rounded-3 border shadow-sm text-center">
+                                <div class="text-muted small fw-bold">OVERALL VARIANCE</div>
+                                <div class="fs-4 fw-bold text-danger" id="reconTotalDiff">₹0.00</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="p-3 bg-white rounded-3 border shadow-sm text-center">
+                                <div class="text-muted small fw-bold">MATCH STATUS</div>
+                                <div class="fs-4 fw-bold" id="reconMatchStatus">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Monthly Table -->
+                    <div class="table-responsive bg-white rounded-3 border shadow-sm" style="max-height: 480px;">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light fw-bold text-secondary sticky-top">
+                                <tr>
+                                    <th>Month</th>
+                                    <th class="text-center">Tally Count</th>
+                                    <th class="text-end">Tally Amount (₹)</th>
+                                    <th class="text-center">Zoho Count</th>
+                                    <th class="text-end">Zoho Amount (₹)</th>
+                                    <th class="text-end">Difference (₹)</th>
+                                    <th class="text-center">Status</th>
+                                    <th class="text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="monthlyReconTableBody">
+                                <tr>
+                                    <td colspan="8" class="text-center py-4 text-muted">
+                                        <span class="spinner-border spinner-border-sm me-2"></span>Loading reconciliation data...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- INDIVIDUAL PAYMENT DISCREPANCY BREAKDOWN MODAL -->
+    <div class="modal fade" id="discrepancyBreakdownModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content border-0 shadow-lg" style="border-radius:16px;">
+                <div class="modal-header bg-danger text-white d-flex align-items-center" style="border-radius:16px 16px 0 0;">
+                    <h5 class="modal-title fw-bold mb-0" id="discrepancyModalTitle">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>Payment Discrepancy Breakdown
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="alert alert-danger border-0 shadow-sm d-flex align-items-center gap-3 mb-4" style="border-radius:12px;">
+                        <i class="bi bi-info-circle-fill fs-2"></i>
+                        <div>
+                            <div class="fw-bold fs-6" id="discrepancySubtitle">Discrepancy Details</div>
+                            <div class="small">Below are the exact payment-by-payment differences between Tally and Zoho Books for this month.</div>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive rounded-3 border shadow-sm">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light fw-bold text-secondary">
+                                <tr>
+                                    <th>Payment #</th>
+                                    <th>Vendor Name</th>
+                                    <th class="text-end">Tally Amount (₹)</th>
+                                    <th class="text-end">Zoho Amount (₹)</th>
+                                    <th class="text-end">Difference (₹)</th>
+                                    <th>Reason / Discrepancy Cause</th>
+                                </tr>
+                            </thead>
+                            <tbody id="discrepancyTbody">
+                                <!-- Dynamic rows inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ZOHO SYNC REPORT MODAL (Payments & Expenses) -->
+    <div class="modal fade" id="syncReportModal" tabindex="-1" aria-labelledby="syncReportModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0" style="border-radius: 16px;">
+                <div class="modal-header bg-primary text-white" style="border-radius: 16px 16px 0 0;">
+                    <h5 class="modal-title fw-bold" id="syncReportModalLabel"><i class="bi bi-file-earmark-bar-graph me-2"></i>Zoho Sync Report &mdash; Payments &amp; Expenses</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4" id="syncReportBody"></div>
+                <div class="modal-footer bg-light d-flex justify-content-between" style="border-radius: 0 0 16px 16px;">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger fw-bold" onclick="downloadSyncErrorsExcel()">
+                        <i class="bi bi-file-earmark-excel me-2"></i>Download Error Excel (.xlsx)
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -270,7 +537,7 @@
             <div class="table-responsive" style="max-height:60vh">
               <table class="table table-sm table-hover align-middle mb-0">
                 <thead class="sticky-top" style="background:#f9fafb">
-                  <tr>
+<tr>
                     <th style="width:50%" class="ps-3">Zoho Books Field</th>
                     <th style="width:50%">Your Tally DB Field <small class="text-muted fw-normal">(type to search)</small></th>
                   </tr>
@@ -298,52 +565,473 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        
         let allPayments = [];
+        let filteredPayments = [];
         let vendorPayments = [];
         let expensePayments = [];
-        let activeTab = 'vendor';
-        let totalAmount = 0;
-    
+        let activeTab = 'all';
+        let activeMonth = 'ALL';
+        let selectedYearFilter = 'ALL';
+        let allUniqueYears = [];
+        let allUniqueYmList = [];
+        let lastSyncResult = null;
+        let paymentsEventSource = null;
 
         document.addEventListener('DOMContentLoaded', async () => {
+            await loadDbPayments();
+        });
+
+        async function loadDbPayments() {
             try {
                 const res = await fetch('/api/db/payments_made');
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.payments && data.payments.length > 0) {
-                        allPayments = data.payments;
-                        totalAmount = data.total_amount;
-                        updateKPIs();
-                        updateTabCounts(); renderPayments();
-                        console.log('Loaded payments made from database');
-                        return;
-                    }
+                    allPayments = data.payments || [];
+                    vendorPayments = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'vendor' || (p.voucher_type || '').toLowerCase() === 'payment');
+                    expensePayments = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'expense' || (p.voucher_type || '').toLowerCase() === 'expense');
+                    buildMonthPills();
+                    updateTabCounts();
+                    applyFilters();
                 }
             } catch (err) {
-                console.log('Could not load from database, trying localStorage...');
+                console.error("Failed to load payments made from DB:", err);
             }
+        }
 
-            const cached = localStorage.getItem('paymentsMadeData');
-            if (cached) {
-                try {
-                    const data = JSON.parse(cached);
-                    allPayments = data.payments || [];
-                    totalAmount = data.total_amount || 0;
-                    updateKPIs();
-                    updateTabCounts(); renderPayments();
-                    console.log('Loaded payments made from localStorage');
-                } catch(e) {}
-            }
-        });
+        function getNormalizedDate(raw) {
+            if (!raw) return '';
+            const s = String(raw).replace(/-/g, '').trim();
+            return s.length >= 8 ? s.slice(0, 8) : s;
+        }
 
         function formatDate(d) {
-            if (!d || d.length !== 8) return d || '';
-            return d.slice(6,8) + '/' + d.slice(4,6) + '/' + d.slice(0,4);
+            if (!d) return '';
+            const s = String(d).replace(/-/g, '').trim();
+            if (s.length === 8) {
+                return s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
+            }
+            return d;
         }
 
         function formatDateForAPI(dateInput) {
-            return dateInput.replace(/-/g, '');
+            return (dateInput || '').replace(/-/g, '');
+        }
+
+        function getMonthName(ym) {
+            if (!ym || ym.length < 6) return ym || '';
+            const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            const y = ym.slice(0, 4);
+            const m = parseInt(ym.slice(4, 6), 10);
+            return `${MONTHS[m] || ''} ${y}`;
+        }
+
+        function buildMonthPills() {
+            const ymSet = new Set();
+            const yearSet = new Set();
+
+            (allPayments || []).forEach(p => {
+                const d = getNormalizedDate(p.date);
+                if (d && d.length >= 6) {
+                    ymSet.add(d.slice(0, 6));
+                    yearSet.add(d.slice(0, 4));
+                }
+            });
+
+            allUniqueYmList = Array.from(ymSet).sort();
+            allUniqueYears = Array.from(yearSet).sort();
+
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) {
+                const currentVal = yearSelect.value || selectedYearFilter;
+                yearSelect.innerHTML = '<option value="ALL">All Years (' + allUniqueYears.length + ')</option>';
+                allUniqueYears.forEach(y => {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = 'Year ' + y;
+                    yearSelect.appendChild(opt);
+                });
+                yearSelect.value = allUniqueYears.includes(currentVal) ? currentVal : 'ALL';
+                selectedYearFilter = yearSelect.value;
+            }
+
+            renderFilteredPills();
+        }
+
+        function renderFilteredPills() {
+            const container = document.getElementById('monthPillsContainer');
+            if (!container) return;
+
+            container.innerHTML = '';
+            const MONTH_SHORT = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            let filteredYms = allUniqueYmList;
+            if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                filteredYms = allUniqueYmList.filter(ym => ym.startsWith(selectedYearFilter));
+            }
+
+            filteredYms.forEach(ym => {
+                const year = ym.slice(0, 4);
+                const mon  = parseInt(ym.slice(4, 6));
+                const label = MONTH_SHORT[mon] + " '" + year.slice(2);
+                const btn = document.createElement('button');
+                btn.className = 'month-pill' + (ym === activeMonth ? ' active' : '');
+                btn.textContent = label;
+                btn.setAttribute('onclick', `quickMonth('${ym}')`);
+                container.appendChild(btn);
+            });
+        }
+
+        function quickMonth(ym) {
+            if (ym === 'ALL') {
+                activeMonth = 'ALL';
+            } else {
+                activeMonth = (activeMonth === ym) ? 'ALL' : ym;
+            }
+            updatePillUI();
+            applyFilters();
+        }
+
+        function clearMonthFilter() {
+            activeMonth = 'ALL';
+            selectedYearFilter = 'ALL';
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) yearSelect.value = 'ALL';
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function onYearPillSelectChange(selectedYear) {
+            selectedYearFilter = selectedYear;
+            if (selectedYear === 'ALL') {
+                activeMonth = 'ALL';
+            } else if (activeMonth !== 'ALL' && !activeMonth.startsWith(selectedYear)) {
+                activeMonth = 'ALL';
+            }
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function updatePillUI() {
+            document.querySelectorAll('.month-pill').forEach(btn => {
+                const onclickStr = btn.getAttribute('onclick') || '';
+                const match = onclickStr.match(/'([^']+)'/);
+                const ym = match ? match[1] : '';
+                btn.classList.toggle('active', ym === activeMonth);
+            });
+
+            const allPillBtn = document.getElementById('allMonthsPillBtn');
+            if (allPillBtn) {
+                if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    allPillBtn.textContent = `ALL (${selectedYearFilter})`;
+                } else {
+                    allPillBtn.textContent = 'ALL (All Months)';
+                }
+                allPillBtn.classList.toggle('active', activeMonth === 'ALL');
+            }
+
+            const badge = document.getElementById('activeMonthBadge');
+            if (badge) {
+                if (activeMonth && activeMonth !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = getMonthName(activeMonth);
+                } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = `Year ${selectedYearFilter} (All Months)`;
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        function switchCategoryTab(tab) {
+            activeTab = tab;
+            applyFilters();
+        }
+
+        function updateTabCounts() {
+            const allCount = allPayments.length;
+            const vendorCount = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'vendor' || (p.voucher_type || '').toLowerCase() === 'payment').length;
+            const expenseCount = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'expense' || (p.voucher_type || '').toLowerCase() === 'expense').length;
+
+            const ac = document.getElementById('allCount');
+            const vc = document.getElementById('vendorCount');
+            const ec = document.getElementById('expenseCount');
+            if (ac) ac.innerText = allCount;
+            if (vc) vc.innerText = vendorCount;
+            if (ec) ec.innerText = expenseCount;
+        }
+
+        function applyFilters() {
+            const search = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+            const statusFilter = document.getElementById('zohoStatusFilter')?.value || 'ALL';
+
+            let list = allPayments.slice();
+
+            // Tab Filter
+            if (activeTab === 'vendor') {
+                list = list.filter(p => (p.payment_category || '').toLowerCase() === 'vendor' || (p.voucher_type || '').toLowerCase() === 'payment');
+            } else if (activeTab === 'expense') {
+                list = list.filter(p => (p.payment_category || '').toLowerCase() === 'expense' || (p.voucher_type || '').toLowerCase() === 'expense');
+            }
+
+            // Month / Year Filter
+            if (activeMonth && activeMonth !== 'ALL') {
+                list = list.filter(p => getNormalizedDate(p.date).startsWith(activeMonth));
+            } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                list = list.filter(p => getNormalizedDate(p.date).startsWith(selectedYearFilter));
+            }
+
+            // Zoho Status Filter
+            if (statusFilter === 'SYNCED') {
+                list = list.filter(p => p.zoho_status === 'synced' || p.zoho_payment_id);
+            } else if (statusFilter === 'PENDING') {
+                list = list.filter(p => p.zoho_status !== 'synced' && !p.zoho_payment_id);
+            }
+
+            // Search Query
+            if (search) {
+                list = list.filter(p => {
+                    const no = (p.payment_number || '').toLowerCase();
+                    const v = (p.vendor_name || '').toLowerCase();
+                    const ref = (p.reference_number || '').toLowerCase();
+                    const mode = (p.payment_mode || '').toLowerCase();
+                    return no.includes(search) || v.includes(search) || ref.includes(search) || mode.includes(search);
+                });
+            }
+
+            filteredPayments = list;
+            renderPaymentsTable(filteredPayments);
+            updateKPIs();
+        }
+
+        function updateKPIs() {
+            const list = filteredPayments;
+            const totalCount = list.length;
+            const totalAmt = list.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+            const syncedCount = list.filter(p => p.zoho_status === 'synced' || p.zoho_payment_id).length;
+            const pendingCount = totalCount - syncedCount;
+
+            document.getElementById('total-payments').innerText = totalCount.toLocaleString();
+            document.getElementById('total-amount').innerText = '₹' + Math.round(totalAmt).toLocaleString('en-IN');
+            document.getElementById('synced-count').innerText = syncedCount.toLocaleString();
+            document.getElementById('pending-count').innerText = pendingCount.toLocaleString();
+        }
+
+        function renderPaymentsTable(dataToRender) {
+            const tbody = document.getElementById('tableBody');
+            if (!dataToRender || dataToRender.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-2 d-block mb-2"></i>No payments found matching current filters.</td></tr>';
+                updateSelectionUI();
+                return;
+            }
+
+            tbody.innerHTML = dataToRender.map((p, idx) => {
+                const isSynced = (p.zoho_status === 'synced' || Boolean(p.zoho_payment_id));
+                const statusBadge = isSynced
+                    ? '<span class="badge bg-success-subtle text-success border border-success fw-bold"><i class="bi bi-check-circle-fill me-1"></i>Synced</span>'
+                    : (p.zoho_status === 'failed'
+                        ? `<span class="badge bg-danger-subtle text-danger border border-danger fw-bold" title="${p.zoho_error || ''}"><i class="bi bi-exclamation-octagon-fill me-1"></i>Failed</span>`
+                        : '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning fw-semibold"><i class="bi bi-clock me-1"></i>Pending</span>');
+
+                const modeBadge = (p.payment_mode === 'Cash')
+                    ? '<span class="badge bg-success">Cash</span>'
+                    : '<span class="badge bg-primary">Bank</span>';
+
+                return `
+                <tr style="cursor: pointer;" onclick="showPaymentDetails(${idx})">
+                    <td onclick="event.stopPropagation()">
+                        <input type="checkbox" class="form-check-input payment-chk" data-idx="${idx}" onchange="updateSelectionUI()">
+                    </td>
+                    <td class="fw-bold text-primary">${p.payment_number || '-'}</td>
+                    <td>${formatDate(p.date)}</td>
+                    <td class="fw-semibold">${p.vendor_name || '-'}</td>
+                    <td>${modeBadge}</td>
+                    <td class="text-end fw-bold">₹${parseFloat(p.amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                    <td class="text-center">${statusBadge}</td>
+                    <td class="text-center" onclick="event.stopPropagation()">
+                        <button class="btn btn-sm btn-outline-primary" onclick="showPaymentDetails(${idx})">
+                            <i class="bi bi-eye"></i> View
+                        </button>
+                    </td>
+                </tr>`;
+            }).join('');
+
+            updateSelectionUI();
+        }
+
+        function updateSelectionUI() {
+            const checked = document.querySelectorAll('.payment-chk:checked');
+            const count = checked.length;
+            const all = document.querySelectorAll('.payment-chk');
+            const bar = document.getElementById('selectionBar');
+            const btn = document.getElementById('insertSelectedBtn');
+            const allChk = document.getElementById('selectAllChk');
+
+            if (bar) bar.style.display = count > 0 ? 'flex' : 'none';
+            const countEl = document.getElementById('selectedCount');
+            if (countEl) countEl.innerText = count;
+
+            if (btn) {
+                btn.disabled = count === 0;
+                btn.innerHTML = count > 0
+                    ? `<i class="bi bi-cloud-upload me-1"></i> Sync ${count} Selected`
+                    : '<i class="bi bi-cloud-upload me-1"></i> Sync Selected';
+            }
+
+            if (allChk) {
+                allChk.checked = all.length > 0 && count === all.length;
+                allChk.indeterminate = count > 0 && count < all.length;
+            }
+        }
+
+        function selectAllVisible(checked) {
+            document.querySelectorAll('.payment-chk').forEach(chk => chk.checked = checked);
+            const allChk = document.getElementById('selectAllChk');
+            if (allChk) allChk.checked = checked;
+            updateSelectionUI();
+        }
+
+        function showPaymentDetails(idx) {
+            const p = filteredPayments[idx];
+            if (!p) return;
+
+            let allocRows = '';
+            let allocs = p.bill_allocations;
+            if (typeof allocs === 'string') {
+                try { allocs = JSON.parse(allocs); } catch (e) { allocs = []; }
+            }
+            if (Array.isArray(allocs) && allocs.length > 0) {
+                allocRows = allocs.map(a => `
+                    <tr>
+                        <td>${a.bill_type || a.billtype || 'Agst Ref'}</td>
+                        <td class="fw-bold">${a.bill_number || a.name || '-'}</td>
+                        <td class="text-end">₹${parseFloat(a.amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                    </tr>
+                `).join('');
+            }
+
+            let entryRows = '';
+            let entries = p.ledger_entries;
+            if (typeof entries === 'string') {
+                try { entries = JSON.parse(entries); } catch (e) { entries = []; }
+            }
+            if (Array.isArray(entries) && entries.length > 0) {
+                entryRows = entries.map(e => {
+                    const amt = parseFloat(e.amount || 0);
+                    const isDebit = amt < 0;
+                    const isRoundOff = /\bround(\s*off)?\b/i.test(e.ledger_name || '');
+                    let badgeClass = isDebit ? 'bg-danger' : 'bg-primary';
+                    let badgeText = isDebit ? 'Debit (Paid To / Exp)' : 'Credit (Paid From)';
+                    
+                    if (isRoundOff) {
+                        badgeClass = 'bg-secondary';
+                        badgeText = amt > 0 ? 'Round Off (-)' : 'Round Off (+)';
+                    }
+
+                    return `
+                        <tr>
+                            <td class="fw-semibold">${e.ledger_name || '-'}</td>
+                            <td class="text-center"><span class="badge ${badgeClass}">${badgeText}</span></td>
+                            <td class="text-end fw-bold ${isDebit ? 'text-danger' : (isRoundOff ? 'text-secondary' : 'text-primary')}">${isRoundOff ? (amt > 0 ? '-₹' : '+₹') : '₹'}${Math.abs(amt).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            const html = `
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6"><strong>Payment #:</strong> <span class="text-primary fw-bold">${p.payment_number || '-'}</span></div>
+                    <div class="col-md-6"><strong>Date:</strong> ${formatDate(p.date)}</div>
+                    <div class="col-md-6"><strong>Vendor / Expense Accounts:</strong> <span class="fw-semibold">${p.vendor_name || '-'}</span></div>
+                    <div class="col-md-6"><strong>Payment Mode:</strong> ${p.payment_mode || 'Bank'}</div>
+                    <div class="col-md-6"><strong>Bank / Cash Account:</strong> <span class="fw-semibold">${p.bank_account || '-'}</span></div>
+                    <div class="col-md-6"><strong>Total Voucher Amount:</strong> <span class="text-success fw-bold fs-6">₹${parseFloat(p.amount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</span></div>
+                    <div class="col-md-12"><strong>Narration:</strong> ${p.narration || '-'}</div>
+                </div>
+
+                ${entryRows ? `
+                    <h6 class="fw-bold mt-4 mb-2 text-dark"><i class="bi bi-journal-text me-2"></i>Ledger Entries Breakdown (Particulars)</h6>
+                    <div class="table-responsive border rounded-3 mb-3">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Ledger Name</th>
+                                    <th class="text-center">Entry Type</th>
+                                    <th class="text-end">Amount (₹)</th>
+                                </tr>
+                            </thead>
+                            <tbody>${entryRows}</tbody>
+                        </table>
+                    </div>
+                ` : ''}
+
+                ${allocRows ? `
+                    <h6 class="fw-bold mt-4 mb-2 text-dark"><i class="bi bi-receipt me-2"></i>Bill Allocations</h6>
+                    <div class="table-responsive border rounded-3">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light"><tr><th>Type</th><th>Bill Number</th><th class="text-end">Amount</th></tr></thead>
+                            <tbody>${allocRows}</tbody>
+                        </table>
+                    </div>
+                ` : ''}
+            `;
+
+            document.getElementById('paymentDetails').innerHTML = html;
+            new bootstrap.Modal(document.getElementById('paymentModal')).show();
+        }
+
+        async function markSelectedSynced(status = 'synced') {
+            const checked = document.querySelectorAll('.payment-chk:checked');
+            if (checked.length === 0) {
+                alert('Please select at least one payment first.');
+                return;
+            }
+
+            const selectedNos = Array.from(checked).map(chk => {
+                const idx = parseInt(chk.dataset.idx);
+                return filteredPayments[idx]?.payment_number;
+            }).filter(Boolean);
+
+            if (!confirm(`Mark ${selectedNos.length} selected payment(s) as ${status.toUpperCase()} in Database?`)) return;
+
+            try {
+                const res = await fetch('/api/payments_made/mark_synced', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ payment_numbers: selectedNos, status: status })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    selectedNos.forEach(pNo => {
+                        const target = allPayments.find(p => p.payment_number === pNo);
+                        if (target) {
+                            target.zoho_status = status;
+                            target.zoho_payment_id = status === 'synced' ? 'MANUALLY_SYNCED' : null;
+                        }
+                    });
+                    applyFilters();
+                    selectAllVisible(false);
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to update payment status'));
+                }
+            } catch (err) {
+                alert('Connection error: ' + err.message);
+            }
+        }
+
+        async function fetchData() {
+            const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
+            const toDate = formatDateForAPI(document.getElementById('toDate').value);
+            const limitVal = document.getElementById('limitInput').value;
+            const limit = limitVal ? parseInt(limitVal) : null;
+
+            await _startPaymentsJob('/api/payments_made/fetch/start', {
+                from_date: fromDate,
+                to_date: toDate,
+                limit: limit
+            }, 'importBtn');
         }
 
         async function uploadJson(event) {
@@ -353,99 +1041,124 @@
             const btn = document.getElementById('uploadBtn');
             const orig = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Uploading...';
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Uploading...';
 
             const formData = new FormData();
             formData.append('file', file);
 
             try {
-                const res = await fetch('/api/payments_made/upload', {
-                    method: 'POST',
-                    body: formData
-                });
+                const res = await fetch('/api/payments_made/upload', { method: 'POST', body: formData });
                 const data = await res.json();
-
                 if (data.error) {
                     alert('Error: ' + data.error);
                 } else {
-                    allPayments = data.payments || [];
-                    totalAmount = data.total_amount || 0;
-                    localStorage.setItem('paymentsMadeData', JSON.stringify({
-                        payments: allPayments,
-                        total_amount: totalAmount
-                    }));
-                    updateKPIs();
-                    updateTabCounts(); renderPayments();
+                    await loadDbPayments();
+                    alert(`Successfully imported ${data.payments?.length || 0} payments made into DB!`);
                 }
             } catch (error) {
                 alert('Upload failed: ' + error.message);
             } finally {
                 btn.innerHTML = orig;
                 btn.disabled = false;
-                event.target.value = ''; // Reset input
+                event.target.value = '';
             }
         }
 
-
-        async function fetchData() {
-            const btn = document.getElementById('importBtn');
-            const orig = btn.innerHTML;
+        async function splitExpenses() {
+            const btn = document.getElementById('splitBtn');
             btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Importing...';
-
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Splitting...';
             try {
-                const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
-                const toDate = formatDateForAPI(document.getElementById('toDate').value);
-                const limitVal = document.getElementById('limitInput').value;
-                const limit = limitVal ? parseInt(limitVal) : null;
-
-                const res = await fetch('/api/payments_made/fetch', {
+                const res = await fetch('/api/payments/split_expenses', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ from_date: fromDate, to_date: toDate, limit: limit })
+                    body: JSON.stringify({ payments: allPayments })
                 });
                 const data = await res.json();
-
-                if (data.error) { alert('Error: ' + data.error); return; }
-
-                await new Promise(r => setTimeout(r, 500));
-
-                try {
-                    const dbRes = await fetch('/api/db/payments_made');
-                    if (dbRes.ok) {
-                        const dbData = await dbRes.json();
-                        allPayments = dbData.payments || [];
-                        totalAmount = dbData.total_amount || 0;
-                        localStorage.setItem('paymentsMadeData', JSON.stringify(dbData));
-                    } else {
-                        allPayments = data.payments || [];
-                        totalAmount = data.total_amount || 0;
-                        localStorage.setItem('paymentsMadeData', JSON.stringify(data));
+                if (data.status === 'success') {
+                    if (data.payments) {
+                        allPayments = data.payments;
                     }
-                } catch (err) {
-                    allPayments = data.payments || [];
-                    totalAmount = data.total_amount || 0;
+                    vendorPayments = data.vendor_payments || [];
+                    expensePayments = data.expenses || data.expense_payments || [];
+                    updateTabCounts();
+                    applyFilters();
+                    alert(`Splitting Complete & Saved to DB!\nVendor Payments: ${vendorPayments.length}\nDirect Expenses: ${expensePayments.length}`);
+                } else {
+                    alert('Error splitting expenses: ' + (data.error || data.message || 'Unknown error'));
                 }
-
-                updateKPIs();
-                updateTabCounts(); renderPayments();
-
-            } catch (err) {
-                console.error(err);
-                alert('Connection Error: Make sure app.py is running.');
+            } catch (e) {
+                alert('Split failed: ' + e.message);
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = orig;
+                btn.innerHTML = '<i class="bi bi-diagram-2 me-1"></i> Split Expenses Auto';
             }
         }
 
         async function syncZoho() {
-            if (!confirm("This will sync payments made to Zoho Books as Vendor Payments. Continue?")) return;
+            if (!confirm("This will sync all filtered payments to Zoho Books. Continue?")) return;
+            const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
+            const toDate = formatDateForAPI(document.getElementById('toDate').value);
+            const limitVal = document.getElementById('limitInput').value;
+            const limit = limitVal ? parseInt(limitVal) : null;
 
-            const btn = document.getElementById('syncBtn');
-            const orig = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+            await _pushPaymentsToZoho(null, 'syncBtn');
+        }
+
+        async function syncFilteredMonth() {
+            if (filteredPayments.length === 0) {
+                alert('No payments found in current filtered range to sync.');
+                return;
+            }
+            if (!confirm(`Sync all ${filteredPayments.length} payment(s) in this filter to Zoho Books?`)) return;
+            await _pushPaymentsToZoho(filteredPayments, 'syncMonthBtn');
+        }
+
+        async function insertSelected() {
+            const checked = document.querySelectorAll('.payment-chk:checked');
+            if (checked.length === 0) {
+                alert('Please select at least one payment first.');
+                return;
+            }
+
+            const selectedItems = Array.from(checked).map(chk => filteredPayments[parseInt(chk.dataset.idx)]);
+            if (!confirm(`Sync ${selectedItems.length} selected payment(s) to Zoho Books?`)) return;
+
+            await _pushPaymentsToZoho(selectedItems, 'insertSelectedBtn');
+        }
+
+        function logPaymentsConsole(msg, isError = false) {
+            const card = document.getElementById('paymentsSyncConsoleCard');
+            const cons = document.getElementById('paymentsSyncConsole');
+            if (card) card.style.display = 'block';
+            if (cons) {
+                const ts = new Date().toLocaleTimeString();
+                cons.textContent += `[${ts}] ${msg}\n`;
+                cons.scrollTop = cons.scrollHeight;
+            }
+        }
+
+        function clearPaymentsSyncConsole() {
+            const cons = document.getElementById('paymentsSyncConsole');
+            if (cons) cons.textContent = '';
+        }
+
+        async function _pushPaymentsToZoho(selectedItems, btnId) {
+            const btn = document.getElementById(btnId);
+            const orig = btn ? btn.innerHTML : '';
+            const statusBadge = document.getElementById('paymentsSyncConsoleStatus');
+            
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Syncing...';
+            }
+            if (statusBadge) {
+                statusBadge.className = 'badge bg-warning text-dark';
+                statusBadge.textContent = 'Syncing...';
+            }
+
+            const count = selectedItems ? selectedItems.length : 'all';
+            logPaymentsConsole(`🚀 Starting sync of ${count} payment(s)/expense(s) to Zoho Books...`);
 
             try {
                 const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
@@ -456,367 +1169,296 @@
                 const res = await fetch('/api/payments_made/sync_zoho', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ payments_made: null, from_date: fromDate, to_date: toDate, limit: limit })
+                    body: JSON.stringify({
+                        payments_made: selectedItems,
+                        from_date: fromDate,
+                        to_date: toDate,
+                        limit: limit
+                    })
                 });
                 const data = await res.json();
 
                 if (data.status === 'success') {
-                    let msg = ' Zoho Sync Complete!\n\n';
-                    msg += `Total: ${data.total} | Success: ${data.success} | Failed: ${data.failed}\n\n`;
-                    if (data.failed > 0 && data.errors) {
-                        msg += ' Failed:\n';
-                        data.errors.forEach((e, i) => {
-                            msg += `${i+1}. #${e.payment_number} - ${e.vendor}: ${e.error}\n`;
+                    lastSyncResult = data;
+                    logPaymentsConsole(`✅ Sync Completed: ${data.success || 0} Succeeded, ${data.failed || 0} Failed.`);
+                    
+                    if (data.errors && data.errors.length > 0) {
+                        data.errors.forEach(err => {
+                            logPaymentsConsole(`❌ #${err.payment_number || 'Voucher'} (${err.vendor || 'Ledger'}): ${err.error}`, true);
                         });
                     }
-                    alert(msg);
+
+                    if (statusBadge) {
+                        statusBadge.className = data.failed > 0 ? 'badge bg-danger' : 'badge bg-success';
+                        statusBadge.textContent = data.failed > 0 ? `Finished with ${data.failed} errors` : 'All Synced';
+                    }
+
+                    showSyncReportModal(data);
+                    await loadDbPayments();
+                    selectAllVisible(false);
                 } else {
-                    alert(' Sync Error: ' + data.message);
+                    const errMsg = data.message || data.error || 'Unknown sync error';
+                    logPaymentsConsole(`❌ Sync Error: ${errMsg}`, true);
+                    if (statusBadge) {
+                        statusBadge.className = 'badge bg-danger';
+                        statusBadge.textContent = 'Error';
+                    }
+                    alert('Sync Error: ' + errMsg);
                 }
             } catch (err) {
-                alert('Connection Error during Sync');
+                logPaymentsConsole(`❌ Connection Error: ${err.message}`, true);
+                if (statusBadge) {
+                    statusBadge.className = 'badge bg-danger';
+                    statusBadge.textContent = 'Connection Failed';
+                }
+                alert('Connection Error during Sync: ' + err.message);
             } finally {
-                btn.disabled = false;
-                btn.innerHTML = orig;
-            }
-        }
-
-        function updateKPIs() {
-            document.getElementById('total-payments').innerText = allPayments.length;
-            document.getElementById('total-amount').innerText = '' + (totalAmount || 0).toLocaleString();
-        }
-
-        function getModeBadge(mode) {
-            if (!mode) return '<span class="payment-mode-badge mode-other">Unknown</span>';
-            const m = mode.toLowerCase();
-            if (m.includes('cash')) return '<span class="payment-mode-badge mode-cash"> Cash</span>';
-            if (m.includes('bank')) return '<span class="payment-mode-badge mode-bank"> Bank</span>';
-            return '<span class="payment-mode-badge mode-other">' + mode + '</span>';
-        }
-
-        
-        function renderPayments(customData = null) {
-            let dataToRender = customData;
-            
-            if (!customData) {
-                if (vendorPayments.length > 0 || expensePayments.length > 0) {
-                    dataToRender = activeTab === 'vendor' ? vendorPayments : expensePayments;
-                } else {
-                    if (activeTab === 'expense') {
-                        dataToRender = []; // nothing split yet
-                    } else {
-                        dataToRender = allPayments;
-                    }
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = orig;
                 }
             }
-            
-            const tbody = document.getElementById('tableBody');
-            
-            const count = dataToRender.length;
-            const amt = dataToRender.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-            document.getElementById('total-payments').innerText = count;
-            document.getElementById('total-amount').innerText = '' + amt.toLocaleString();
-
-            if (!dataToRender || dataToRender.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No records found for this view</td></tr>';
-                return;
-            }
-
-            tbody.innerHTML = dataToRender.map((p, idx) => {
-                const realIdx = allPayments.indexOf(p);
-                const clickIdx = realIdx !== -1 ? realIdx : idx;
-                
-                return `
-                <tr style="cursor: pointer;" onclick="showDetails(${clickIdx})">
-                    <td class="fw-medium text-danger">${p.payment_number}</td>
-                    <td>${formatDate(p.date)}</td>
-                    <td>${p.vendor_name}</td>
-                    <td>
-                        <span class="badge ${p.payment_mode === 'Cash' ? 'bg-success' : 'bg-primary'}">
-                            ${p.payment_mode || 'Bank'}
-                        </span>
-                    </td>
-                    <td class="text-end fw-bold">${parseFloat(p.amount).toLocaleString()}</td>
-                    <td class="text-center">
-                        <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); showDetails(${clickIdx})">
-                            <i class="bi bi-eye"></i> View
-                        </button>
-                    </td>
-                </tr>`;
-            }).join('');
         }
 
-        function showDetails(idx) {
-            const p = allPayments[idx];
-            const modal = new bootstrap.Modal(document.getElementById('paymentModal'));
+        function showSyncReportModal(data) {
+            const modalEl = document.getElementById('syncReportModal');
+            if (!modalEl) return;
 
-            const billRows = (p.bill_allocations || []).map(a =>
-                `<tr><td>${a.bill_type || 'Agst Ref'}</td><td><strong>${a.bill_number}</strong></td><td class="text-end">${(a.amount || 0).toLocaleString()}</td></tr>`
-            ).join('');
+            const missingVendorsMap = {};
+            (data.errors || []).forEach(e => {
+                const v = (e.vendor || 'Unknown').trim();
+                missingVendorsMap[v] = (missingVendorsMap[v] || 0) + 1;
+            });
 
-            const ledgerRows = (p.ledger_entries || []).map(e =>
+            const missingVendorRows = Object.entries(missingVendorsMap).map(([vname, cnt]) =>
                 `<tr>
-                    <td>${e.ledger_name}</td>
-                    <td class="text-end ${e.amount < 0 ? 'text-danger' : 'text-success'}">
-                        ${e.amount < 0 ? '(-)' : ''}${Math.abs(e.amount || 0).toLocaleString()} ${e.amount < 0 ? 'Dr' : 'Cr'}
-                    </td>
-                    <td class="text-end text-muted">${e.current_balance ? '' + e.current_balance.toLocaleString() + ' Cr' : '-'}</td>
+                    <td class="fw-bold text-danger">${vname}</td>
+                    <td class="text-center"><span class="badge bg-danger">${cnt} voucher(s)</span></td>
+                    <td><span class="badge bg-warning text-dark">Vendor Contact Missing in Zoho</span></td>
                 </tr>`
             ).join('');
 
-            const costCenterRows = (p.cost_center_allocations || []).map(cc =>
+            const errRows = (data.errors || []).map((e) =>
                 `<tr>
-                    <td>${cc.category || 'Unknown'}</td>
-                    <td class="text-end text-danger border-start">${(cc.amount || 0).toLocaleString()}</td>
+                    <td class="fw-bold text-danger">#${e.payment_number || '-'}</td>
+                    <td>${e.vendor || '-'}</td>
+                    <td class="text-danger small">${e.error || '-'}</td>
                 </tr>`
             ).join('');
 
-            document.getElementById('paymentDetails').innerHTML = `
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <h6 class="text-danger border-bottom pb-2">Payment Information</h6>
-                        <table class="table table-sm">
-                            <tr><th width="40%">Payment #:</th><td>${p.payment_number || '-'}</td></tr>
-                            <tr><th>Date:</th><td>${formatDate(p.date)}</td></tr>
-                            <tr><th>Vendor:</th><td>${p.vendor_name || '-'}</td></tr>
-                            <tr><th>Amount:</th><td class="fw-bold text-danger">${(p.amount || 0).toLocaleString()}</td></tr>
-                        </table>
+            document.getElementById('syncReportBody').innerHTML = `
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded text-center border">
+                            <div class="text-muted small">Total Processed</div>
+                            <div class="fs-4 fw-bold text-dark">${data.total || 0}</div>
+                        </div>
                     </div>
-                    <div class="col-md-6">
-                        <h6 class="text-danger border-bottom pb-2">Payment Details</h6>
-                        <table class="table table-sm">
-                            <tr><th width="40%">Mode:</th><td>${getModeBadge(p.payment_mode)}</td></tr>
-                            <tr><th>Bank Account:</th><td>${p.bank_account || 'N/A'}</td></tr>
-                            <tr><th>Reference #:</th><td>${p.reference_number || 'N/A'}</td></tr>
-                            <tr><th>Against Ref:</th><td>${p.against_reference || 'N/A'}</td></tr>
-                        </table>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-success-subtle rounded text-center border border-success">
+                            <div class="text-success small fw-bold">Successfully Synced</div>
+                            <div class="fs-4 fw-bold text-success">${data.success || 0}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-danger-subtle rounded text-center border border-danger">
+                            <div class="text-danger small fw-bold">Failed / Missing Vendors</div>
+                            <div class="fs-4 fw-bold text-danger">${data.failed || 0}</div>
+                        </div>
                     </div>
                 </div>
-                ${p.narration ? `<div class="mt-3"><h6 class="text-danger border-bottom pb-2">Narration</h6><p class="small">${p.narration}</p></div>` : ''}
-                ${billRows ? `
-                    <div class="mt-3">
-                        <h6 class="text-danger border-bottom pb-2">Bill Allocations</h6>
-                        <table class="table table-sm table-bordered">
-                            <thead class="table-light"><tr><th>Type</th><th>Bill Number</th><th class="text-end">Amount</th></tr></thead>
-                            <tbody>${billRows}</tbody>
+
+                ${missingVendorRows ? `
+                    <div class="mb-4">
+                        <h6 class="text-danger border-bottom pb-2 fw-bold"><i class="bi bi-person-x-fill me-2"></i>Missing Vendors Requiring Creation in Zoho</h6>
+                        <table class="table table-sm table-hover border">
+                            <thead class="bg-light">
+                                <tr>
+                                    <th>Vendor Name</th>
+                                    <th class="text-center">Affected Vouchers</th>
+                                    <th>Required Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>${missingVendorRows}</tbody>
                         </table>
-                    </div>` : ''}
-                ${costCenterRows ? `
-                    <div class="mt-3">
-                        <h6 class="text-danger border-bottom pb-2">Cost Center Allocations</h6>
-                        <table class="table table-sm table-bordered">
-                            <thead class="table-light"><tr><th>Category - Cost Center</th><th class="text-end">Amount</th></tr></thead>
-                            <tbody>${costCenterRows}</tbody>
-                        </table>
-                    </div>` : ''}
-                ${ledgerRows ? `
-                    <div class="mt-3">
-                        <h6 class="text-danger border-bottom pb-2">Ledger Breakdown</h6>
-                        <table class="table table-sm table-bordered">
-                            <thead class="table-light"><tr><th>Ledger</th><th class="text-end">Amount</th><th class="text-end">Balance</th></tr></thead>
-                            <tbody>${ledgerRows}<tr class="table-light fw-bold"><td>Total Paid</td><td class="text-end text-danger">${(p.amount || 0).toLocaleString()}</td><td></td></tr></tbody>
-                        </table>
-                    </div>` : `<div class="alert alert-info mt-3"><i class="bi bi-info-circle me-2"></i>Advance payment  no specific bill allocations.</div>`}
+                    </div>
+                ` : ''}
+
+                ${errRows ? `
+                    <div>
+                        <h6 class="text-secondary border-bottom pb-2 fw-bold"><i class="bi bi-exclamation-triangle me-2"></i>Detailed Failure Logs</h6>
+                        <div style="max-height:220px; overflow-y:auto;" class="border rounded p-2 bg-light">
+                            <table class="table table-sm table-striped mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Voucher #</th>
+                                        <th>Vendor</th>
+                                        <th>Error Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${errRows}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                ` : '<div class="alert alert-success mt-3 mb-0"><i class="bi bi-check-circle me-2"></i>All records synced successfully without any errors!</div>'}
             `;
-            modal.show();
+
+            new bootstrap.Modal(modalEl).show();
         }
 
-        function handleSearch() {
-            const q = document.getElementById('searchInput').value.toLowerCase();
-            const filtered = allPayments.filter(p =>
-                (p.payment_number || '').toLowerCase().includes(q) ||
-                (p.vendor_name || '').toLowerCase().includes(q) ||
-                (p.reference_number || '').toLowerCase().includes(q)
-            );
-            renderPayments(filtered);
-        }
-    
-        async function splitExpenses() {
-            if (allPayments.length === 0) {
-                alert("No payments available to split. Please fetch data first.");
-                return;
+        async function _startPaymentsJob(startUrl, payload, btnId) {
+            const btn = document.getElementById(btnId);
+            const orig = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing...';
             }
-            
-            const btn = document.getElementById('splitBtn');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Splitting...';
-            btn.disabled = true;
+
+            const consoleCard = document.getElementById('paymentsConsoleCard');
+            const consoleEl = document.getElementById('paymentsConsole');
+            const stopBtn = document.getElementById('paymentsConsoleStopBtn');
+            const topStopBtn = document.getElementById('paymentsStopBtn');
+
+            if (consoleCard) consoleCard.style.display = 'block';
+            if (consoleEl) consoleEl.textContent = 'Starting process...\n';
+            if (stopBtn) stopBtn.disabled = false;
+            if (topStopBtn) topStopBtn.disabled = false;
 
             try {
-                const res = await fetch('/api/payments/split_expenses', {
+                const res = await fetch(startUrl, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ payments: allPayments })
+                    body: JSON.stringify(payload)
                 });
                 const data = await res.json();
-                
-                if (data.status === 'success') {
-                    // Overwrite the local arrays entirely with the source of truth from DB
-                    vendorPayments = data.vendor_payments || [];
-                    expensePayments = data.expenses || [];
-                    // Rebuild allPayments so indices match correctly
-                    allPayments = [...vendorPayments, ...expensePayments];
-                    
-                    updateTabCounts();
-                    renderPayments();
-                    alert(data.message);
-                } else {
-                    alert('Error: ' + data.error);
+                if (data.status !== 'success' || !data.job_id) {
+                    throw new Error(data.message || 'Failed to start job');
                 }
+
+                const jobId = data.job_id;
+                if (paymentsEventSource) paymentsEventSource.close();
+                paymentsEventSource = new EventSource(`/api/jobs/${jobId}/events`);
+
+                paymentsEventSource.addEventListener('log', (e) => {
+                    const logData = JSON.parse(e.data);
+                    if (consoleEl) {
+                        consoleEl.textContent += logData.message + '\n';
+                        consoleEl.scrollTop = consoleEl.scrollHeight;
+                    }
+                });
+
+                paymentsEventSource.addEventListener('done', async () => {
+                    paymentsEventSource.close();
+                    if (stopBtn) stopBtn.disabled = true;
+                    if (topStopBtn) topStopBtn.disabled = true;
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = orig;
+                    }
+                    await loadDbPayments();
+                });
+
+                paymentsEventSource.addEventListener('error', () => {
+                    paymentsEventSource.close();
+                    if (stopBtn) stopBtn.disabled = true;
+                    if (topStopBtn) topStopBtn.disabled = true;
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = orig;
+                    }
+                });
             } catch (err) {
-                console.error(err);
-                alert('Connection Error');
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
+                alert('Job Failed: ' + err.message);
+                if (stopBtn) stopBtn.disabled = true;
+                if (topStopBtn) topStopBtn.disabled = true;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = orig;
+                }
             }
         }
-        
-        function updateTabCounts() {
-            if (vendorPayments.length === 0 && expensePayments.length === 0) {
-                // Initial load, haven't split yet
-                document.getElementById('vendorCount').innerText = allPayments.length;
-                document.getElementById('expenseCount').innerText = '0';
-            } else {
-                document.getElementById('vendorCount').innerText = vendorPayments.length;
-                document.getElementById('expenseCount').innerText = expensePayments.length;
+
+        function clearPaymentsConsole() {
+            const consoleEl = document.getElementById('paymentsConsole');
+            if (consoleEl) consoleEl.textContent = '';
+        }
+
+        function stopPaymentsJob() {
+        }
+
+        async function exportToExcel() {
+            try {
+                const res = await fetch('/api/payments_made/export_zoho_excel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ payments_made: filteredPayments })
+                });
+                if (!res.ok) throw new Error("Failed to generate Excel file");
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Zoho_Payments_Made_${new Date().toISOString().slice(0,10)}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Export failed: ' + e.message);
             }
         }
-    
 
-    // --------------------------------------------------
-    // Job-based Import (SSE live console)
-    // --------------------------------------------------
-    let _paymentsJobId = null;
-    let _paymentsES = null;
-
-    function _showPaymentsConsole(show=true) {
-      const card = document.getElementById('paymentsConsoleCard');
-      if (card) card.style.display = show ? '' : 'none';
-    }
-
-    function clearPaymentsConsole() {
-      const pre = document.getElementById('paymentsConsole');
-      if (pre) pre.textContent = '';
-    }
-
-    function _appendPaymentsLine(line) {
-      const pre = document.getElementById('paymentsConsole');
-      if (!pre) return;
-      pre.textContent += (line || '') + "\\n";
-      pre.scrollTop = pre.scrollHeight;
-    }
-
-    function _setPaymentsConsoleStatus(text) {
-      const el = document.getElementById('paymentsConsoleStatus');
-      if (el) el.textContent = text || '';
-    }
-
-    function _setPaymentsButtons(running) {
-      const stopBtn = document.getElementById('paymentsStopBtn');
-      const fetchBtn = document.querySelector("button[onclick='fetchData()']") || document.querySelector('.btn-primary');
-      const syncBtn = document.querySelector("button[onclick='syncZoho()']") || document.querySelector('.btn-outline-primary');
-      if (fetchBtn) fetchBtn.disabled = !!running;
-      if (syncBtn) syncBtn.disabled = !!running;
-      if (stopBtn) stopBtn.disabled = !running;
-    }
-
-    async function stopPaymentsJob() {
-      if (!_paymentsJobId) return;
-      try {
-        await fetch(`/api/jobs/${_paymentsJobId}/stop`, { method: 'POST' });
-        _appendPaymentsLine('Stop requested.');
-        _setPaymentsConsoleStatus('Stopping...');
-      } catch (e) {
-        _appendPaymentsLine('Failed to request stop: ' + (e?.message || e));
-      }
-    }
-
-    async function _startPaymentsJob(url, payload, onDone) {
-      if (_paymentsES) {
-        try { _paymentsES.close(); } catch (e) {}
-        _paymentsES = null;
-      }
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload || {}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.status !== 'success' || !data.job_id) {
-        throw new Error(data.message || data.error || 'Failed to start job');
-      }
-      _paymentsJobId = data.job_id;
-      _appendPaymentsLine('Job ID: ' + _paymentsJobId);
-      _setPaymentsConsoleStatus('Running...');
-      _paymentsES = new EventSource(`/api/jobs/${_paymentsJobId}/stream`);
-      _paymentsES.addEventListener('log', (ev) => {
-        try {
-          const d = JSON.parse(ev.data || '{}');
-          if (d.message) _appendPaymentsLine(d.message);
-        } catch (e) {}
-      });
-      _paymentsES.addEventListener('done', (ev) => {
-        let d = {};
-        try { d = JSON.parse(ev.data || '{}'); } catch (e) {}
-        const result = d.result || {};
-        if (_paymentsES) {
-          try { _paymentsES.close(); } catch (e) {}
-          _paymentsES = null;
-        }
-        _setPaymentsButtons(false);
-        _setPaymentsConsoleStatus(result.status || 'done');
-        if (typeof onDone === 'function') onDone(result);
-      });
-    }
-
-    async function fetchData() {
-      const btn = document.querySelector("button[onclick='fetchData()']") || document.querySelector('.btn-primary');
-      const originalText = btn ? btn.innerHTML : '';
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Importing...';
-      }
-
-      _showPaymentsConsole(true);
-      clearPaymentsConsole();
-      _setPaymentsConsoleStatus('Starting...');
-      _setPaymentsButtons(true);
-
-      try {
-        const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
-        const toDate = formatDateForAPI(document.getElementById('toDate').value);
-        const limit = document.getElementById('limitInput').value || null;
-
-        await _startPaymentsJob('/api/payments_made/fetch/start', {
-          from_date: fromDate,
-          to_date: toDate,
-          limit: limit ? parseInt(limit) : null,
-        }, async () => {
-          try {
-            const dbRes = await fetch('/api/db/payments_made');
-            if (dbRes.ok) {
-              const dbData = await dbRes.json();
-              allPayments = dbData.payments || [];
-              totalAmount = dbData.total_amount || 0;
-              localStorage.setItem('paymentsData', JSON.stringify(dbData));
-              updateKPIs();
-              renderPayments(allPayments);
-              updateTabCounts();
+        async function downloadSyncErrorsExcel() {
+            try {
+                const res = await fetch('/api/payments_made/export_sync_errors_excel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ errors: (lastSyncResult && lastSyncResult.errors) || [] })
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    alert(data.error || 'No payment sync errors found to download.');
+                    return;
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Payments_Made_Sync_Error_Report_${new Date().toISOString().slice(0,10)}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Download failed: ' + e.message);
             }
-          } catch (e) {}
-        });
-      } catch (err) {
-        console.error(err);
-        alert('Error: ' + (err.message || err));
-        _setPaymentsButtons(false);
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = originalText;
         }
-      }
-    }
+
+        async function downloadSyncReportExcel() {
+            if (!lastSyncResult) {
+                alert("No sync report available to download.");
+                return;
+            }
+            try {
+                const res = await fetch('/api/payments_made/export_report', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(lastSyncResult)
+                });
+                if (!res.ok) throw new Error("Failed to generate Excel report");
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'Payments_Expenses_Zoho_Sync_Report.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (err) {
+                alert('Error downloading report: ' + err.message);
+            }
+        }
 
     
       // ════════════════════════════════════════════════════════════════

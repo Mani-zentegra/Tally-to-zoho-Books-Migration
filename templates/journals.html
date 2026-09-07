@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -8,6 +8,9 @@
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    
+    <!-- SheetJS (xlsx) -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     
     {% include '_sidebar_styles.html' %}
     {% include '_zb_theme.html' %}
@@ -69,39 +72,19 @@
 
     <div class="container-fluid p-0">
 
-        <!-- HEADER & ACTIONS -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h4 class="fw-bold mb-1">Journal Entries</h4>
-                <p class="text-muted small mb-0">View and sync journal vouchers from Tally to Zoho Books</p>
-            </div>
-            <div class="d-flex gap-2 flex-wrap">
-                <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success d-flex align-items-center" disabled>
-                    <i class="bi bi-check2-square me-2"></i> Insert Selected
-                </button>
-                <button onclick="insertFiltered()" id="insertFilteredBtn" class="btn btn-info text-white d-flex align-items-center" disabled>
-                    <i class="bi bi-calendar2-check me-2"></i> Insert Month Filter
-                </button>
-                <button onclick="refreshCache()" class="btn btn-outline-secondary d-flex align-items-center" title="Refresh ledger cache from Tally">
-                    <i class="bi bi-arrow-clockwise me-2"></i> Refresh Cache
-                </button>
-                <button onclick="syncZoho()" class="btn btn-outline-primary d-flex align-items-center">
-                    <i class="bi bi-arrow-repeat me-2"></i> Sync All to Zoho
-                </button>
-                
-                <input type="file" id="jsonUpload" accept=".json" style="display: none;" onchange="uploadJson(event)">
-                <button onclick="document.getElementById('jsonUpload').click()" class="btn btn-outline-success d-flex align-items-center">
-                    <i class="bi bi-upload me-2"></i> Upload JSON
-                </button>
-<button onclick="fetchData()" class="btn btn-primary d-flex align-items-center">
-                    <i class="bi bi-cloud-download me-2"></i> Import Journals
-                </button>
-            </div>
-        </div>
-
-        <!-- DATE RANGE + MONTH FILTER -->
-        <div class="content-card mb-4">
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 1 — GET DATA (Import from Tally or Upload a file)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#5e35b1 !important;">
             <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#5e35b1;font-size:13px;">STEP 1</span>
+                    <span class="fw-semibold">Get Data</span>
+                    <span class="text-muted small">— Import journals from Tally or upload a saved file</span>
+                    <button onclick="refreshCache()" class="btn btn-sm btn-outline-secondary ms-auto" title="Refresh Tally ledger cache">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Cache
+                    </button>
+                </div>
                 <div class="row g-3 align-items-end">
                     <div class="col-md-3">
                         <label class="form-label small fw-bold">From Date</label>
@@ -116,119 +99,177 @@
                         <input type="number" id="limitInput" class="form-control" placeholder="All">
                     </div>
                     <div class="col-md-2">
-                        <label class="form-label small fw-bold">Filter by Month</label>
-                        <select id="monthFilter" class="form-select" onchange="applyMonthFilter()">
-                            <option value="">All Months</option>
-                            <option value="202504">April 2025</option>
-                            <option value="202505">May 2025</option>
-                            <option value="202506">June 2025</option>
-                            <option value="202507">July 2025</option>
-                            <option value="202508">August 2025</option>
-                            <option value="202509">September 2025</option>
-                            <option value="202510">October 2025</option>
-                            <option value="202511">November 2025</option>
-                            <option value="202512">December 2025</option>
-                            <option value="202601">January 2026</option>
-                            <option value="202602">February 2026</option>
-                            <option value="202603">March 2026</option>
-                        </select>
+                        <button onclick="fetchData()" class="btn btn-primary w-100">
+                            <i class="bi bi-cloud-download me-1"></i> Import from Tally
+                        </button>
                     </div>
                     <div class="col-md-2">
-                        <button onclick="fetchData()" class="btn btn-secondary w-100">
-                            <i class="bi bi-funnel me-2"></i> Apply Filter
+                        <input type="file" id="jsonUpload" accept=".json,.xml" style="display:none" onchange="uploadJson(event)">
+                        <button onclick="document.getElementById('jsonUpload').click()" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-upload me-1"></i> Upload File
                         </button>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- QUICK MONTH PILLS -->
-            <div class="month-filter-bar">
-                <span class="text-muted small fw-bold me-1"><i class="bi bi-calendar3 me-1"></i>Quick:</span>
-                <button class="month-pill" onclick="quickMonth('202504')">Apr</button>
-                <button class="month-pill" onclick="quickMonth('202505')">May</button>
-                <button class="month-pill" onclick="quickMonth('202506')">Jun</button>
-                <button class="month-pill" onclick="quickMonth('202507')">Jul</button>
-                <button class="month-pill" onclick="quickMonth('202508')">Aug</button>
-                <button class="month-pill" onclick="quickMonth('202509')">Sep</button>
-                <button class="month-pill" onclick="quickMonth('202510')">Oct</button>
-                <button class="month-pill" onclick="quickMonth('202511')">Nov</button>
-                <button class="month-pill" onclick="quickMonth('202512')">Dec</button>
-                <button class="month-pill" onclick="quickMonth('202601')">Jan</button>
-                <button class="month-pill" onclick="quickMonth('202602')">Feb</button>
-                <button class="month-pill" onclick="quickMonth('202603')">Mar</button>
-                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="clearMonthFilter()">
-                    <i class="bi bi-x-circle me-1"></i>Clear
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 2 — REVIEW (Filter by month, see totals)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#0288d1 !important;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#0288d1;font-size:13px;">STEP 2</span>
+                    <span class="fw-semibold">Review</span>
+                    <span class="text-muted small">— Filter by month, check totals, select what to sync</span>
+                    <span id="activeMonthBadge" class="badge bg-primary ms-2" style="display:none;"></span>
+                </div>
+
+                <!-- Month Quick Filter Bar — Compact Year + Month Selector (Same as Invoices) -->
+                <div class="d-flex align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border" id="monthPillsRow">
+                    <span class="text-muted small fw-bold text-nowrap ms-1"><i class="bi bi-calendar3 me-1"></i>Filter Month:</span>
+                    
+                    <select id="yearPillSelect" class="form-select form-select-sm border-secondary fw-semibold text-primary" style="width: auto; min-width: 120px;" onchange="onYearPillSelectChange(this.value)">
+                        <option value="ALL">All Years</option>
+                    </select>
+
+                    <button id="allMonthsPillBtn" class="month-pill fw-bold flex-shrink-0" onclick="quickMonth('ALL')">ALL</button>
+
+                    <div id="monthPillsContainer" class="d-flex align-items-center gap-1 overflow-auto flex-grow-1 py-1" style="white-space: nowrap; scrollbar-width: thin;">
+                        <!-- Dynamic Month Pills inserted here -->
+                    </div>
+
+                    <button class="btn btn-sm btn-outline-secondary text-nowrap flex-shrink-0 ms-1" onclick="clearMonthFilter()">
+                        <i class="bi bi-x-circle me-1"></i>Clear
+                    </button>
+                </div>
+
+                <!-- KPI Cards -->
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#5e35b1">
+                            <div class="kpi-label">Total Journals</div>
+                            <div class="kpi-value" id="total-journals">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#43a047">
+                            <div class="kpi-label">Total Amount</div>
+                            <div class="kpi-value text-success" id="total-debit">₹0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#2e7d32">
+                            <div class="kpi-label"><i class="bi bi-check-circle me-1 text-success"></i>Synced to Zoho</div>
+                            <div class="kpi-value text-success" id="synced-count">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#ed6c02">
+                            <div class="kpi-label"><i class="bi bi-clock me-1 text-warning"></i>Pending Sync</div>
+                            <div class="kpi-value text-warning" id="pending-count">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 3 — SYNC TO ZOHO
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#2e7d32 !important;">
+            <div class="p-3 d-flex align-items-center flex-wrap gap-3">
+                <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
+                <span class="fw-semibold">Sync to Zoho Books</span>
+                <div class="d-flex gap-2 ms-auto flex-wrap">
+                    <button onclick="openAccountWiseModal()" id="btnAccountRecon" class="btn btn-outline-primary" title="View account-wise debits, credits, differences, and match status">
+                        <i class="bi bi-diagram-3-fill me-1"></i> Account-Wise Matching
+                    </button>
+                    <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success" disabled>
+                        <i class="bi bi-cloud-upload me-1"></i> Sync Selected
+                    </button>
+                    <button onclick="insertFiltered()" id="insertFilteredBtn" class="btn btn-outline-success" disabled>
+                        <i class="bi bi-calendar2-check me-1"></i> Sync This Month
+                    </button>
+                    <button onclick="syncZoho()" class="btn btn-dark">
+                        <i class="bi bi-arrow-repeat me-1"></i> Sync All
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- LIVE CONSOLE (JOURNALS SYNC) -->
+        <div id="journalsSyncConsoleCard" class="content-card p-3 mb-4" style="display:none;">
+            <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+                <div class="fw-semibold text-dark">
+                    <i class="bi bi-terminal me-2"></i>Live Sync Console
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="badge bg-secondary" id="journalsSyncConsoleStatus">idle</span>
+                    <button id="journalsSyncStopBtn" onclick="stopJournalsSync()" class="btn btn-outline-danger btn-sm" disabled>
+                        <i class="bi bi-stop-circle me-1"></i> Stop
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="clearJournalsSyncConsole()" title="Clear Console">
+                        <i class="bi bi-trash3 me-1"></i> Clear
+                    </button>
+                </div>
+            </div>
+            <pre id="journalsSyncConsole" class="mb-0 p-3 rounded-3 bg-dark text-light small" style="max-height: 260px; overflow:auto; white-space: pre-wrap; font-family: SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></pre>
+        </div>
+
+        <!-- SELECTION STATUS BAR -->
+        <div id="selectionBar" class="alert alert-primary d-flex align-items-center justify-content-between py-2 px-3 mb-3 shadow-sm border" style="display:none; border-radius:10px;">
+            <span><i class="bi bi-check2-square me-2 text-primary fs-5"></i><strong id="selectedCount">0</strong> journal(s) selected</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button class="btn btn-sm btn-success fw-semibold" onclick="markSelectedSynced('synced')" title="Mark selected journals as Synced in Database">
+                    <i class="bi bi-check-circle-fill me-1"></i> Mark as Synced (Manual)
                 </button>
-                <span id="activeMonthBadge" class="badge bg-primary ms-2" style="display:none;"></span>
+                <button class="btn btn-sm btn-outline-secondary fw-semibold" onclick="markSelectedSynced('pending')" title="Mark selected journals as Pending">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> Mark as Pending
+                </button>
+                <button class="btn btn-sm btn-primary" id="insertSelectedBtnBar" onclick="insertSelected()">
+                    <i class="bi bi-cloud-upload me-1"></i> Sync to Zoho API
+                </button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(true)">Select All</button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(false)">Clear</button>
             </div>
         </div>
 
-        <!-- KPI CARDS -->
-        <div class="row g-3 mb-4">
-            <div class="col-md-4">
-                <div class="kpi-card" style="border-color: #5e35b1;">
-                    <div class="kpi-label">Total Journals</div>
-                    <div class="kpi-value" id="total-journals">0</div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="kpi-card" style="border-color: #e53935;">
-                    <div class="kpi-label">Total Debit</div>
-                    <div class="kpi-value text-danger" id="total-debit">₹0</div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="kpi-card" style="border-color: #43a047;">
-                    <div class="kpi-label">Total Credit</div>
-                    <div class="kpi-value text-success" id="total-credit">₹0</div>
-                </div>
-            </div>
-        </div>
+        <!-- FIELD MAPPING hidden input -->
+        <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
 
-        <!-- SELECTION INFO BAR -->
-        <div id="selectionBar" class="alert alert-success d-flex align-items-center justify-content-between py-2 px-3 mb-3" style="display:none; border-radius:10px;">
-            <span><i class="bi bi-check2-square me-2"></i><strong id="selectedCount">0</strong> journal(s) selected</span>
-            <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-outline-success" onclick="selectAllVisible(true)">Select All Visible</button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="selectAllVisible(false)">Clear Selection</button>
-            </div>
-        </div>
-      <!-- FIELD MAPPING: hidden file input -->
-      <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
-
-
-
-        <!-- CONTENT TABLE -->
+        <!-- ═══════════════════════════════════════════════════════════
+             JOURNALS TABLE
+        ════════════════════════════════════════════════════════════ -->
         <div class="content-card">
+            <!-- Table toolbar -->
             <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div class="input-group" style="max-width: 300px;">
-                    <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search journals..." onkeyup="applyFilters()">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="input-group" style="max-width:260px;">
+                        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search journals..." onkeyup="applyFilters()">
+                    </div>
+                    <div class="d-flex align-items-center gap-1">
+                        <span class="text-muted small fw-bold ms-2"><i class="bi bi-funnel me-1"></i>Sync Status:</span>
+                        <select id="zohoStatusFilter" class="form-select form-select-sm" style="width:140px;" onchange="applyFilters()">
+                            <option value="ALL">All Journals</option>
+                            <option value="SYNCED">✓ Synced</option>
+                            <option value="PENDING">⏳ Pending</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
-                      onclick="document.getElementById('fmZohoFieldsInput').click()"
-                      title="Upload Zoho Books sample XLSX or CSV">
-                      <i class="bi bi-file-earmark-arrow-up"></i> Import Zoho Fields
-                    </button>
-                    <button id="fmMappingBtn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1"
-                      disabled onclick="fmOpenModal()" title="Map Tally DB fields to Zoho Books fields">
-                      <i class="bi bi-diagram-2"></i> Field Mapping
-                    </button>
-                    <button id="fmExportBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1"
-                      style="display:none" onclick="window.open('/api/field-mapping/' + FM_MODULE + '/export','_blank')">
-                      <i class="bi bi-cloud-upload"></i> Export for Zoho
+                <div class="d-flex align-items-center gap-2">
+                    <div id="filterStatus" class="text-muted small"></div>
+                    <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1" onclick="exportToExcel()" title="Export Journals to Excel">
+                        <i class="bi bi-file-earmark-excel" style="color:#217346;"></i> Export Excel
                     </button>
                 </div>
             </div>
             <div id="fmStatusBar" class="px-3 py-1 small" style="display:none"></div>
 
-                <div id="filterStatus" class="text-muted small"></div>
-            </div>
-
             <div class="table-responsive" style="max-height: 600px;">
                 <table class="table table-hover align-middle mb-0">
-                    <thead class="sticky-top">
+                    <thead class="sticky-top" style="background:#f8fafc;">
                         <tr>
                             <th style="width:40px;">
                                 <input type="checkbox" id="selectAllChk" class="form-check-input" title="Select / Deselect All" onchange="selectAllVisible(this.checked)">
@@ -238,12 +279,13 @@
                             <th>Narration</th>
                             <th class="text-end">Debit</th>
                             <th class="text-end">Credit</th>
+                            <th class="text-center">Zoho Sync Status</th>
                             <th class="text-center">Action</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody">
                         <tr>
-                            <td colspan="7" class="text-center py-5 text-muted">
+                            <td colspan="8" class="text-center py-5 text-muted">
                                 <i class="bi bi-journal-bookmark fs-1 mb-2"></i><br>
                                 Click "Import Journals" to fetch data
                             </td>
@@ -268,6 +310,120 @@
             </div>
         </div>
     </div>
+
+    <!-- ZOHO SYNC REPORT MODAL (Journals) -->
+    <div class="modal fade" id="syncReportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-bar-graph me-2"></i>Zoho Sync Report &mdash; Journals</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4" id="syncReportBody"></div>
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-success fw-bold" onclick="downloadSyncReportExcel()">
+                        <i class="bi bi-file-earmark-excel me-2"></i>Download Excel Sync Report (.xlsx)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ACCOUNT-WISE JOURNAL MATCHING & RECONCILIATION MODAL -->
+    <div class="modal fade" id="accountWiseModal" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-dark text-white">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-diagram-3-fill text-warning fs-5"></i>
+                        <h5 class="modal-title mb-0">Account-Wise Journal Matching & Variance Report</h5>
+                        <span class="badge bg-primary ms-2" id="accReconMonthBadge">All Months</span>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <!-- Summary Strip -->
+                    <div class="row g-3 mb-4" id="accReconSummaryStrip">
+                        <div class="col-md-3">
+                            <div class="p-3 bg-light rounded-3 border text-center">
+                                <div class="small text-muted fw-bold">Total Accounts</div>
+                                <div class="fs-4 fw-bold text-dark" id="reconTotalAccounts">0</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="p-3 bg-light rounded-3 border text-center">
+                                <div class="small text-muted fw-bold">Total Debit</div>
+                                <div class="fs-4 fw-bold text-danger" id="reconTotalDebit">₹0</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="p-3 bg-light rounded-3 border text-center">
+                                <div class="small text-muted fw-bold">Total Credit</div>
+                                <div class="fs-4 fw-bold text-success" id="reconTotalCredit">₹0</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="p-3 rounded-3 border text-center bg-light" id="reconDiffCard">
+                                <div class="small text-muted fw-bold">Overall Net Difference</div>
+                                <div class="fs-4 fw-bold" id="reconNetDiff">₹0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Toolbar / Search / Filter -->
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                        <div class="input-group" style="max-width: 320px;">
+                            <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+                            <input type="text" id="accSearchInput" class="form-control" placeholder="Search account name..." onkeyup="filterAccountReconTable()">
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <select id="accFilterStatus" class="form-select form-select-sm" style="width: 170px;" onchange="filterAccountReconTable()">
+                                <option value="ALL">All Accounts</option>
+                                <option value="VARIANCE">❌ Has Variance (Dr ≠ Cr)</option>
+                                <option value="BALANCED"> Balanced (Dr = Cr)</option>
+                            </select>
+                            <button class="btn btn-outline-success btn-sm" onclick="exportAccountWiseExcel()">
+                                <i class="bi bi-file-earmark-excel me-1"></i> Export Account Excel
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Table -->
+                    <div class="table-responsive" style="max-height: 480px;">
+                        <table class="table table-hover align-middle mb-0 table-bordered">
+                            <thead class="table-dark sticky-top">
+                                <tr>
+                                    <th>#</th>
+                                    <th>Account / Ledger Name</th>
+                                    <th>Type</th>
+                                    <th class="text-center">Entries</th>
+                                    <th class="text-end text-danger">Total Debit (Dr)</th>
+                                    <th class="text-end text-success">Total Credit (Cr)</th>
+                                    <th class="text-end">Difference (Dr - Cr)</th>
+                                    <th class="text-center">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="accReconTableBody">
+                                <tr>
+                                    <td colspan="8" class="text-center py-4 text-muted">
+                                        <span class="spinner-border spinner-border-sm me-2"></span> Loading Account Matching...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <span class="text-muted small"><i class="bi bi-info-circle me-1"></i>Account differences highlight where debit and credit allocations do not net to zero across selected journals.</span>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CUSTOM TOP NOTIFICATION TOAST CONTAINER -->
+    <div id="customToastContainer" style="position: fixed; top: 20px; right: 20px; z-index: 9999; max-width: 420px;"></div>
 
     <!-- SCRIPTS -->
         </div>
@@ -335,7 +491,7 @@
 
         // Load cached data on startup — priority: localStorage → DB → empty
         document.addEventListener('DOMContentLoaded', async () => {
-            const cached = localStorage.getItem('journalsData');
+            const cached = null; // cache disabled
             if (cached) {
                 try {
                     const data = JSON.parse(cached);
@@ -347,9 +503,9 @@
                         renderJournals(allJournals);
                         return;   // localStorage had data, done
                     }
-                    localStorage.removeItem('journalsData'); // empty cache, clear it
+                    // localStorage.removeItem('journalsData'); // empty cache, clear it
                 } catch(e) {
-                    localStorage.removeItem('journalsData');  // corrupted, clear it
+                    // localStorage.removeItem('journalsData');  // corrupted, clear it
                 }
             }
 
@@ -373,7 +529,8 @@
                         total_credit:   totalCredit
                     };
                     updateKPIs(stats);
-                    renderJournals(allJournals);
+                    buildMonthPills();
+                    applyFilters();
                 }
             } catch(e) {
                 console.warn('DB load failed, Tally import needed:', e);
@@ -410,9 +567,10 @@
 
                 allJournals = data.journals;
                 stats       = data.stats;
-                localStorage.setItem('journalsData', JSON.stringify(data));
+                // localStorage.setItem('journalsData', JSON.stringify(data));
 
                 updateKPIs(stats);
+                buildMonthPills();
                 applyFilters();   // re-apply any active month filter
             } catch (err) {
                 console.error(err);
@@ -479,12 +637,96 @@
             }
         }
 
+        function exportToExcel() {
+            const dataToExport = (currentFiltered && currentFiltered.length > 0) ? currentFiltered : allJournals;
+            if (!dataToExport || dataToExport.length === 0) {
+                alert("No journals available to export. Please fetch or load data first.");
+                return;
+            }
+
+            const exportRows = [];
+
+            dataToExport.forEach(j => {
+                const jNum     = j.journal_number || j.voucher_number || '';
+                const jDate    = formatDate(j.date);
+                const narration= j.narration || '';
+                const totDeb   = parseFloat(j.total_debit || 0);
+                const totCred  = parseFloat(j.total_credit || 0);
+
+                let entries = j.line_items || j.ledger_entries || [];
+                if (typeof entries === 'string') {
+                    try { entries = JSON.parse(entries); } catch(e) { entries = []; }
+                }
+
+                if (Array.isArray(entries) && entries.length > 0) {
+                    entries.forEach(e => {
+                        const rawAmt = parseFloat(e.amount || 0);
+                        const isDebit = rawAmt < 0 || e.debit_amount > 0;
+                        const debAmt = isDebit ? Math.abs(rawAmt || e.debit_amount || 0) : 0;
+                        const credAmt = !isDebit ? Math.abs(rawAmt || e.credit_amount || 0) : 0;
+
+                        exportRows.push({
+                            'Journal Number': jNum,
+                            'Journal Date': jDate,
+                            'Ledger Name': e.ledger_name || '',
+                            'Entry Type': isDebit ? 'Debit' : 'Credit',
+                            'Debit Amount (₹)': debAmt,
+                            'Credit Amount (₹)': credAmt,
+                            'Current Balance': e.current_balance || '',
+                            'Total Journal Debit (₹)': totDeb,
+                            'Total Journal Credit (₹)': totCred,
+                            'Narration': narration
+                        });
+                    });
+                } else {
+                    exportRows.push({
+                        'Journal Number': jNum,
+                        'Journal Date': jDate,
+                        'Ledger Name': '-',
+                        'Entry Type': '-',
+                        'Debit Amount (₹)': 0,
+                        'Credit Amount (₹)': 0,
+                        'Current Balance': '-',
+                        'Total Journal Debit (₹)': totDeb,
+                        'Total Journal Credit (₹)': totCred,
+                        'Narration': narration
+                    });
+                }
+            });
+
+            const ws = XLSX.utils.json_to_sheet(exportRows);
+            const colWidths = Object.keys(exportRows[0]).map(k => ({ wch: Math.max(k.length, 16) }));
+            ws['!cols'] = colWidths;
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Full_Journals_Export");
+
+            const filename = "Journals_Complete_Export_" + new Date().toISOString().slice(0, 10) + ".xlsx";
+            XLSX.writeFile(wb, filename);
+        }
+
         /* ---- KPIs ---- */
         function updateKPIs(stats) {
             if (!stats) return;
-            document.getElementById('total-journals').innerText = stats.total_journals || 0;
-            document.getElementById('total-debit').innerText    = '₹' + (stats.total_debit  || 0).toLocaleString();
-            document.getElementById('total-credit').innerText   = '₹' + (stats.total_credit || 0).toLocaleString();
+            document.getElementById('total-journals').innerText = (stats.total_journals || 0).toLocaleString();
+            document.getElementById('total-debit').innerText    = '₹' + (stats.total_debit  || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            if (document.getElementById('synced-count')) {
+                document.getElementById('synced-count').innerText = (stats.synced_count || 0).toLocaleString();
+            }
+            if (document.getElementById('pending-count')) {
+                document.getElementById('pending-count').innerText = (stats.pending_count || 0).toLocaleString();
+            }
+        }
+
+        function getZohoStatusBadge(status, journalNumber) {
+            const s = (status || 'pending').toLowerCase();
+            if (s === 'synced') {
+                return `<span class="badge bg-success-subtle text-success border border-success px-2 py-1" style="cursor:pointer;" onclick="event.stopPropagation(); toggleManualSync('${journalNumber}', 'pending')" title="Click to mark as Pending"><i class="bi bi-check-circle-fill me-1"></i>Synced</span>`;
+            } else if (s === 'failed') {
+                return `<span class="badge bg-danger-subtle text-danger border border-danger px-2 py-1" style="cursor:pointer;" onclick="event.stopPropagation(); toggleManualSync('${journalNumber}', 'synced')" title="Click to mark as Synced"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>`;
+            } else {
+                return `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning px-2 py-1" style="cursor:pointer;" onclick="event.stopPropagation(); toggleManualSync('${journalNumber}', 'synced')" title="Click to mark as Synced"><i class="bi bi-clock-fill me-1"></i>Pending</span>`;
+            }
         }
 
         /* ---- Render table ---- */
@@ -495,7 +737,7 @@
             if (filtBtn) filtBtn.disabled = (journals.length === 0);
 
             if (!journals || journals.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">No Journals Found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted">No Journals Found</td></tr>';
                 updateSelectionUI();
                 return;
             }
@@ -503,21 +745,36 @@
             tbody.innerHTML = journals.map((j) => {
                 const realIdx = allJournals.indexOf(j);
                 let debitTotal = 0, creditTotal = 0;
-                j.line_items.forEach(item => {
+                (j.line_items || []).forEach(item => {
                     if (item.debit_or_credit === 'debit') debitTotal  += item.amount;
                     else                                   creditTotal += item.amount;
                 });
+
+                // Collect all bill allocations (e.g. New Ref 79)
+                const refBadges = [];
+                (j.line_items || []).forEach(item => {
+                    (item.bill_allocations || []).forEach(b => {
+                        refBadges.push(`<span class="badge bg-light text-dark border ms-1 font-monospace" style="font-size: 11px;" title="${b.bill_type || 'Ref'}: ${b.name} (₹${b.amount})"><i class="bi bi-tag-fill text-primary me-1"></i>${b.bill_type || 'Ref'} <strong>${b.name}</strong></span>`);
+                    });
+                });
+                const refsHtml = refBadges.length > 0 ? `<div class="mt-1 d-flex flex-wrap gap-1">${refBadges.join('')}</div>` : '';
+                const isSynced = (j.zoho_status === 'synced' || Boolean(j.zoho_journal_id));
+                const statusBadge = getZohoStatusBadge(isSynced ? 'synced' : (j.zoho_status || 'pending'), j.journal_number);
 
                 return `
                 <tr style="cursor: pointer;" onclick="showJournalDetails(${realIdx})">
                     <td onclick="event.stopPropagation()">
                         <input type="checkbox" class="form-check-input jnl-chk" data-idx="${realIdx}" onchange="updateSelectionUI()">
                     </td>
-                    <td class="fw-medium text-primary">${j.journal_number}</td>
+                    <td>
+                        <span class="fw-medium text-primary">${j.journal_number}</span>
+                        ${refsHtml}
+                    </td>
                     <td>${formatDate(j.date)}</td>
                     <td>${j.narration || '(No narration)'}</td>
                     <td class="text-end text-danger fw-bold">₹${debitTotal.toLocaleString()}</td>
                     <td class="text-end text-success fw-bold">₹${creditTotal.toLocaleString()}</td>
+                    <td class="text-center">${statusBadge}</td>
                     <td class="text-center">
                         <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showJournalDetails(${realIdx})">
                             <i class="bi bi-eye"></i> View
@@ -535,14 +792,17 @@
             const count   = checked.length;
             const bar     = document.getElementById('selectionBar');
             const btn     = document.getElementById('insertSelectedBtn');
+            const countEl = document.getElementById('selectedCount');
             const allChk  = document.getElementById('selectAllChk');
 
-            bar.style.display = count > 0 ? 'flex' : 'none';
-            document.getElementById('selectedCount').innerText = count;
-            btn.disabled = count === 0;
-            btn.innerHTML = count > 0
-                ? `<i class="bi bi-check2-square me-2"></i> Insert ${count} Selected`
-                : '<i class="bi bi-check2-square me-2"></i> Insert Selected';
+            if (bar) bar.style.display = count > 0 ? 'flex' : 'none';
+            if (countEl) countEl.innerText = count;
+            if (btn) {
+                btn.disabled = count === 0;
+                btn.innerHTML = count > 0
+                    ? `<i class="bi bi-cloud-upload me-2"></i> Sync ${count} Selected to Zoho`
+                    : '<i class="bi bi-cloud-upload me-2"></i> Sync Selected to Zoho';
+            }
 
             if (allChk) {
                 allChk.checked       = all.length > 0 && count === all.length;
@@ -557,61 +817,305 @@
             updateSelectionUI();
         }
 
-        /* ---- Month filter helpers ---- */
+        /* ---- Month filter helpers (Aligned with Invoices) ---- */
+        let allUniqueYears = [];
+        let allUniqueYmList = [];
+        let selectedYearFilter = 'ALL';
+
+        function getNormalizedDate(dStr) {
+            if (!dStr) return '';
+            dStr = String(dStr).trim();
+            if (dStr.includes('-')) {
+                const parts = dStr.split('-');
+                if (parts.length === 3) {
+                    if (parts[0].length === 4) return parts[0] + parts[1].padStart(2, '0') + parts[2].padStart(2, '0');
+                    if (parts[2].length === 4) return parts[2] + parts[1].padStart(2, '0') + parts[0].padStart(2, '0');
+                }
+            }
+            if (dStr.includes('/')) {
+                const parts = dStr.split('/');
+                if (parts.length === 3) {
+                    if (parts[2].length === 4) return parts[2] + parts[1].padStart(2, '0') + parts[0].padStart(2, '0');
+                    if (parts[0].length === 4) return parts[0] + parts[1].padStart(2, '0') + parts[2].padStart(2, '0');
+                }
+            }
+            return dStr.replace(/[^0-9]/g, '');
+        }
+
+        function onYearPillSelectChange(selectedYear) {
+            selectedYearFilter = selectedYear;
+            if (activeMonth !== 'ALL' && selectedYear !== 'ALL' && !activeMonth.startsWith(selectedYear)) {
+                activeMonth = 'ALL';
+            }
+            if (selectedYear !== 'ALL') {
+                document.getElementById('fromDate').value = `${selectedYear}-01-01`;
+                document.getElementById('toDate').value = `${selectedYear}-12-31`;
+            }
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function buildMonthPills() {
+            const ymSet = new Set();
+            const yearSet = new Set();
+
+            allJournals.forEach(j => {
+                const d = getNormalizedDate(j.date);
+                if (d && d.length >= 6) {
+                    const ym = d.slice(0, 6);
+                    ymSet.add(ym);
+                    yearSet.add(d.slice(0, 4));
+                }
+            });
+
+            allUniqueYmList = Array.from(ymSet).sort();
+            allUniqueYears = Array.from(yearSet).sort();
+
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) {
+                const currentVal = yearSelect.value || selectedYearFilter;
+                yearSelect.innerHTML = '<option value="ALL">All Years (' + allUniqueYears.length + ')</option>';
+                allUniqueYears.forEach(y => {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = 'Year ' + y;
+                    yearSelect.appendChild(opt);
+                });
+                yearSelect.value = allUniqueYears.includes(currentVal) ? currentVal : 'ALL';
+                selectedYearFilter = yearSelect.value;
+            }
+
+            renderFilteredPills();
+        }
+
+        function renderFilteredPills() {
+            const container = document.getElementById('monthPillsContainer');
+            if (!container) return;
+
+            container.innerHTML = '';
+            const MONTH_SHORT = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            let filteredYms = allUniqueYmList;
+            if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                filteredYms = allUniqueYmList.filter(ym => ym.startsWith(selectedYearFilter));
+            }
+
+            filteredYms.forEach(ym => {
+                const year = ym.slice(0, 4);
+                const mon  = parseInt(ym.slice(4, 6));
+                const label = `${MONTH_SHORT[mon] || mon} ${year.slice(2)}`;
+
+                const btn = document.createElement('button');
+                btn.className = 'month-pill flex-shrink-0';
+                btn.setAttribute('onclick', `quickMonth('${ym}')`);
+                btn.textContent = label;
+                if (ym === activeMonth) {
+                    btn.classList.add('active');
+                }
+                container.appendChild(btn);
+            });
+        }
+
         function quickMonth(ym) {
             activeMonth = (activeMonth === ym) ? '' : ym;
-            document.getElementById('monthFilter').value = activeMonth;
+            const mf = document.getElementById('monthFilter');
+            if (mf) mf.value = activeMonth;
+            if (activeMonth && activeMonth !== 'ALL') {
+                const year = activeMonth.slice(0, 4);
+                const month = activeMonth.slice(4, 6);
+                const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+                const fromEl = document.getElementById('fromDate');
+                const toEl = document.getElementById('toDate');
+                if (fromEl) fromEl.value = `${year}-${month}-01`;
+                if (toEl) toEl.value = `${year}-${month}-${lastDay < 10 ? '0' + lastDay : lastDay}`;
+            }
             updatePillUI();
             applyFilters();
         }
 
         function applyMonthFilter() {
-            activeMonth = document.getElementById('monthFilter').value;
+            const mf = document.getElementById('monthFilter');
+            activeMonth = mf ? mf.value : '';
             updatePillUI();
             applyFilters();
         }
 
         function clearMonthFilter() {
             activeMonth = '';
-            document.getElementById('monthFilter').value = '';
+            selectedYearFilter = 'ALL';
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) yearSelect.value = 'ALL';
+            const mf = document.getElementById('monthFilter');
+            if (mf) mf.value = '';
+            renderFilteredPills();
             updatePillUI();
             applyFilters();
         }
 
         function updatePillUI() {
             document.querySelectorAll('.month-pill').forEach(btn => {
-                const ym = btn.getAttribute('onclick').match(/'(\d+)'/)?.[1];
+                const onclickStr = btn.getAttribute('onclick') || '';
+                const match = onclickStr.match(/'([^']+)'/);
+                const ym = match ? match[1] : '';
                 btn.classList.toggle('active', ym === activeMonth);
             });
             const badge = document.getElementById('activeMonthBadge');
-            if (activeMonth) {
-                badge.style.display = 'inline-block';
-                badge.textContent   = MONTH_NAMES[activeMonth] || activeMonth;
-            } else {
-                badge.style.display = 'none';
+            if (badge) {
+                if (activeMonth && activeMonth !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = MONTH_NAMES[activeMonth] || activeMonth;
+                } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = `Year ${selectedYearFilter} (All Months)`;
+                } else if (activeMonth === 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = 'ALL (All Months)';
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        async function toggleManualSync(journalNumber, targetStatus) {
+            try {
+                const res = await fetch('/api/journals/mark_synced', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        journal_numbers: [journalNumber],
+                        status: targetStatus
+                    })
+                });
+                const data = await res.json();
+                if (data.status === 'success' || data.success) {
+                    const found = allJournals.find(j => j.journal_number === journalNumber);
+                    if (found) {
+                        found.zoho_status = targetStatus;
+                        found.zoho_journal_id = targetStatus === 'synced' ? 'MANUALLY_SYNCED' : null;
+                    }
+                    applyFilters();
+                } else {
+                    alert(data.error || 'Failed to update status.');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Network error while updating sync status.');
+            }
+        }
+
+        async function markSelectedSynced(targetStatus) {
+            const checked = document.querySelectorAll('.jnl-chk:checked');
+            if (checked.length === 0) {
+                alert('Please select at least one journal.');
+                return;
+            }
+            const jnlNumbers = Array.from(checked).map(chk => {
+                const idx = parseInt(chk.dataset.idx);
+                return allJournals[idx]?.journal_number;
+            }).filter(Boolean);
+
+            if (jnlNumbers.length === 0) return;
+
+            try {
+                const res = await fetch('/api/journals/mark_synced', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        journal_numbers: jnlNumbers,
+                        status: targetStatus
+                    })
+                });
+                const data = await res.json();
+                if (data.status === 'success' || data.success) {
+                    jnlNumbers.forEach(num => {
+                        const found = allJournals.find(j => j.journal_number === num);
+                        if (found) {
+                            found.zoho_status = targetStatus;
+                            found.zoho_journal_id = targetStatus === 'synced' ? 'MANUALLY_SYNCED' : null;
+                        }
+                    });
+                    applyFilters();
+                    alert(`Successfully marked ${jnlNumbers.length} journal(s) as ${targetStatus.toUpperCase()}!`);
+                } else {
+                    alert(data.error || 'Failed to update status.');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Network error while updating sync status.');
             }
         }
 
         function applyFilters() {
             const q = document.getElementById('searchInput').value.toLowerCase();
+            const statusFilter = document.getElementById('zohoStatusFilter') ? document.getElementById('zohoStatusFilter').value : 'ALL';
             let filtered = allJournals;
 
-            // Month filter — j.date is YYYYMMDD
-            if (activeMonth) {
-                filtered = filtered.filter(j => j.date && j.date.startsWith(activeMonth));
+            // Year filter if selected and not ALL
+            if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                filtered = filtered.filter(j => {
+                    const norm = getNormalizedDate(j.date);
+                    return norm && norm.startsWith(selectedYearFilter);
+                });
             }
-            // Text search (journal number, narration, ledger names)
+
+            // Month filter
+            if (activeMonth && activeMonth !== 'ALL') {
+                filtered = filtered.filter(j => {
+                    const norm = getNormalizedDate(j.date);
+                    return norm && norm.startsWith(activeMonth);
+                });
+            }
+
+            // Zoho sync status filter
+            if (statusFilter === 'SYNCED') {
+                filtered = filtered.filter(j => j.zoho_status === 'synced' || Boolean(j.zoho_journal_id));
+            } else if (statusFilter === 'PENDING') {
+                filtered = filtered.filter(j => j.zoho_status !== 'synced' && !j.zoho_journal_id);
+            }
+
+            // Text search (journal number, narration, ledger names, and bill allocation refs like '79' or 'New Ref')
             if (q) {
                 filtered = filtered.filter(j =>
-                    j.journal_number.toLowerCase().includes(q) ||
+                    (j.journal_number || j.voucher_number || '').toLowerCase().includes(q) ||
                     (j.narration && j.narration.toLowerCase().includes(q)) ||
-                    j.line_items.some(item => item.ledger_name.toLowerCase().includes(q))
+                    (j.line_items || []).some(item => 
+                        (item.ledger_name || '').toLowerCase().includes(q) ||
+                        (item.bill_allocations || []).some(b => 
+                            (b.name || '').toLowerCase().includes(q) || 
+                            (b.bill_type || '').toLowerCase().includes(q)
+                        )
+                    )
                 );
             }
 
             const status = document.getElementById('filterStatus');
-            status.textContent = filtered.length !== allJournals.length
-                ? `Showing ${filtered.length} of ${allJournals.length} journals` : '';
+            if (status) {
+                status.textContent = filtered.length !== allJournals.length
+                    ? `Showing ${filtered.length} of ${allJournals.length} journals` : '';
+            }
+
+            // Dynamically recalculate KPI cards based on the filtered results!
+            let filtDebit = 0, filtCredit = 0;
+            let syncedCount = 0, pendingCount = 0;
+            filtered.forEach(j => {
+                const isSynced = (j.zoho_status === 'synced' || Boolean(j.zoho_journal_id));
+                if (isSynced) syncedCount++;
+                else pendingCount++;
+
+                (j.line_items || []).forEach(item => {
+                    if (item.debit_or_credit === 'debit') filtDebit += (item.amount || 0);
+                    else filtCredit += (item.amount || 0);
+                });
+            });
+
+            updateKPIs({
+                total_journals: filtered.length,
+                total_debit: filtDebit,
+                total_credit: filtCredit,
+                synced_count: syncedCount,
+                pending_count: pendingCount
+            });
 
             renderJournals(filtered);
         }
@@ -623,7 +1127,7 @@
         ============================================================ */
         async function insertSelected() {
             const checked = document.querySelectorAll('.jnl-chk:checked');
-            if (checked.length === 0) { alert('Please select at least one journal first.'); return; }
+            if (checked.length === 0) { showCustomAlert('Please select at least one journal first.', 'info'); return; }
 
             const selectedJournals = Array.from(checked).map(chk => allJournals[parseInt(chk.dataset.idx)]);
             if (!confirm(`Insert ${selectedJournals.length} selected journal(s) to Zoho Books?`)) return;
@@ -636,7 +1140,7 @@
         ============================================================ */
         async function insertFiltered() {
             if (!currentFiltered || currentFiltered.length === 0) {
-                alert('No journals in the current filter to insert.'); return;
+                showCustomAlert('No journals in the current filter to insert.', 'info'); return;
             }
             const label = activeMonth ? (MONTH_NAMES[activeMonth] || activeMonth) : 'current filter';
             if (!confirm(`Insert ALL ${currentFiltered.length} journal(s) from "${label}" to Zoho Books?`)) return;
@@ -647,51 +1151,288 @@
         /* ============================================================
            SHARED helper — POST list to sync endpoint
         ============================================================ */
-        async function _pushJournalsToZoho(journals, btnId) {
-            const btn = document.getElementById(btnId);
-            const originalHTML = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Inserting...';
+        let lastSyncData = null;
 
-            try {
-                const res  = await fetch('/api/journals/sync_zoho', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ journals: journals })
+        function showCustomAlert(msg, type = 'info') {
+            const container = document.getElementById('customToastContainer');
+            if (!container) return;
+            
+            const toastId = 'toast_' + Date.now();
+            const bgClass = type === 'error' ? 'bg-danger text-white' : (type === 'success' ? 'bg-success text-white' : 'bg-dark text-white');
+            const icon = type === 'error' ? 'bi-exclamation-octagon-fill' : (type === 'success' ? 'bi-check-circle-fill' : 'bi-info-circle-fill');
+            
+            const toastHTML = `
+                <div id="${toastId}" class="toast align-items-center ${bgClass} border-0 show shadow-lg mb-2" role="alert" aria-live="assertive" aria-atomic="true">
+                  <div class="d-flex">
+                    <div class="toast-body d-flex align-items-center gap-2 fs-6">
+                      <i class="bi ${icon} fs-5"></i>
+                      <div>${String(msg).replace(/\n/g, '<br>')}</div>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="document.getElementById('${toastId}').remove()"></button>
+                  </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', toastHTML);
+            setTimeout(() => {
+                const el = document.getElementById(toastId);
+                if (el) el.remove();
+            }, 6000);
+        }
+
+        function showSyncReportModal(data) {
+            lastSyncData = data;
+            const modalEl = document.getElementById('syncReportModal');
+            if (!modalEl) return;
+
+            const stats = data.stats || {};
+            const createdCount = stats.created || 0;
+            const failedCount  = stats.failed || 0;
+            const totalCount   = createdCount + failedCount;
+            const errors       = stats.errors || [];
+
+            const errRows = errors.map((e, i) =>
+                `<tr>
+                    <td class="fw-bold text-danger">#${e.journal_number || '-'}</td>
+                    <td>${e.narration || '-'}</td>
+                    <td class="text-danger small">${e.error || '-'}</td>
+                </tr>`
+            ).join('');
+
+            document.getElementById('syncReportBody').innerHTML = `
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded text-center border">
+                            <div class="text-muted small">Total Processed</div>
+                            <div class="fs-4 fw-bold text-dark">${totalCount}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-success-subtle rounded text-center border border-success">
+                            <div class="text-success small fw-bold"><i class="bi bi-check-circle me-1"></i>Successfully Synced</div>
+                            <div class="fs-4 fw-bold text-success">${createdCount}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-danger-subtle rounded text-center border border-danger">
+                            <div class="text-danger small fw-bold"><i class="bi bi-exclamation-octagon me-1"></i>Failed Journals</div>
+                            <div class="fs-4 fw-bold text-danger">${failedCount}</div>
+                        </div>
+                    </div>
+                </div>
+
+                ${failedCount > 0 ? `
+                    <div class="mb-3">
+                        <h6 class="text-danger border-bottom pb-2 fw-bold"><i class="bi bi-x-circle-fill me-2"></i>Failed Journals &amp; Error Reasons</h6>
+                        <div class="table-responsive" style="max-height: 300px;">
+                            <table class="table table-sm table-hover border align-middle mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th>Journal #</th>
+                                        <th>Narration</th>
+                                        <th>Error Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${errRows}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="alert alert-success text-center my-3 border-0 rounded-3">
+                        <i class="bi bi-check-circle-fill fs-2 d-block mb-2 text-success"></i>
+                        <strong class="fs-5">All ${createdCount} journal(s) synced successfully to Zoho Books!</strong>
+                    </div>
+                `}
+            `;
+
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+
+        function downloadSyncReportExcel() {
+            if (!lastSyncData) return;
+            const stats = lastSyncData.stats || {};
+            const errors = stats.errors || [];
+
+            const reportRows = errors.map(e => ({
+                'Journal #': e.journal_number || '',
+                'Narration': e.narration || '',
+                'Sync Status': 'Failed',
+                'Error Details': e.error || ''
+            }));
+
+            if (reportRows.length === 0) {
+                reportRows.push({
+                    'Journal #': 'ALL',
+                    'Narration': 'ALL',
+                    'Sync Status': 'Success',
+                    'Error Details': `All ${stats.created || 0} journals created cleanly in Zoho Books!`
                 });
-                const data = await res.json();
-                showSyncResult(data);
-                selectAllVisible(false);
-            } catch (err) {
-                console.error(err);
-                alert('Connection Error during Insert');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
-                updateSelectionUI();
             }
+
+            const ws = XLSX.utils.json_to_sheet(reportRows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Journals_Sync_Report");
+            XLSX.writeFile(wb, "Journals_Zoho_Sync_Report_" + new Date().toISOString().slice(0, 10) + ".xlsx");
         }
 
         /* ---- Shared result alert ---- */
         function showSyncResult(data) {
             if (data.status === 'success') {
-                const total = data.stats.created + data.stats.failed;
-                let msg = `Complete!\n\nSummary:\n`;
-                msg += `  Total Sent : ${total}\n`;
-                msg += `  Created  : ${data.stats.created}\n`;
-                msg += `  Failed   : ${data.stats.failed}\n\n`;
-                if (data.stats.failed > 0 && data.stats.errors?.length > 0) {
-                    msg += `Failed Journals:\n${'='.repeat(50)}\n`;
-                    data.stats.errors.forEach((err, i) => {
-                        msg += `${i+1}. Journal : ${err.journal_number}\n`;
-                        msg += `   Date    : ${err.date || 'N/A'}\n`;
-                        msg += `   Error   : ${err.error}\n\n`;
-                    });
-                }
-                alert(msg);
+                showSyncReportModal(data);
             } else {
-                alert('Error: ' + data.message);
+                showCustomAlert('Error: ' + (data.message || data.error || 'Unknown error'), 'error');
             }
+        }
+
+        let activeJournalsJobId = null;
+        let journalsEs = null;
+
+        function clearJournalsSyncConsole() {
+            const el = document.getElementById('journalsSyncConsole');
+            if (el) el.textContent = '';
+        }
+
+        async function stopJournalsSync() {
+            if (!activeJournalsJobId) return;
+            try {
+                await fetch(`/api/jobs/${activeJournalsJobId}/stop`, { method: 'POST' });
+            } catch (e) {
+                console.error("Stop job error:", e);
+            }
+        }
+
+        async function _pushJournalsToZoho(journals, btnId) {
+            const card = document.getElementById('journalsSyncConsoleCard');
+            const consoleEl = document.getElementById('journalsSyncConsole');
+            const statusEl = document.getElementById('journalsSyncConsoleStatus');
+            const stopBtn = document.getElementById('journalsSyncStopBtn');
+
+            if (card) card.style.display = 'block';
+            if (consoleEl) consoleEl.textContent = 'Starting Journals Sync...\n';
+            if (statusEl) {
+                statusEl.textContent = 'running';
+                statusEl.className = 'badge bg-warning text-dark';
+            }
+            if (stopBtn) stopBtn.disabled = false;
+
+            const btn = btnId ? document.getElementById(btnId) : null;
+            let originalHTML = '';
+            if (btn) {
+                originalHTML = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+            }
+
+            try {
+                const res = await fetch('/api/journals/sync_zoho/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ journals: journals })
+                });
+
+                const data = await res.json();
+                if (!res.ok || data.status !== 'success') {
+                    throw new Error(data.message || 'Failed to start journals sync job');
+                }
+
+                activeJournalsJobId = data.job_id;
+                await _streamJournalsJobConsole(activeJournalsJobId);
+
+            } catch (err) {
+                console.error("Sync Error:", err);
+                if (consoleEl) consoleEl.textContent += `\nError: ${err.message}\n`;
+                if (statusEl) {
+                    statusEl.textContent = 'failed';
+                    statusEl.className = 'badge bg-danger';
+                }
+                showCustomAlert('Sync Failed: ' + err.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHTML;
+                }
+                if (stopBtn) stopBtn.disabled = true;
+                updateSelectionUI();
+            }
+        }
+
+        function _streamJournalsJobConsole(jobId) {
+            return new Promise((resolve) => {
+                const consoleEl = document.getElementById('journalsSyncConsole');
+                const statusEl = document.getElementById('journalsSyncConsoleStatus');
+
+                if (journalsEs) journalsEs.close();
+
+                journalsEs = new EventSource(`/api/jobs/${jobId}/stream`);
+
+                journalsEs.addEventListener('log', (ev) => {
+                    try {
+                        const payload = JSON.parse(ev.data);
+                        if (consoleEl) {
+                            consoleEl.textContent += payload.message + '\n';
+                            consoleEl.scrollTop = consoleEl.scrollHeight;
+                        }
+                    } catch (e) {
+                        if (consoleEl) {
+                            consoleEl.textContent += ev.data + '\n';
+                            consoleEl.scrollTop = consoleEl.scrollHeight;
+                        }
+                    }
+                });
+
+                journalsEs.addEventListener('done', async (ev) => {
+                    let resData = {};
+                    try {
+                        const payload = JSON.parse(ev.data);
+                        resData = payload.result || {};
+                        if (statusEl) {
+                            const st = payload.status || 'finished';
+                            statusEl.textContent = st;
+                            statusEl.className = (st === 'success') ? 'badge bg-success' : (st === 'stopped' ? 'badge bg-secondary' : 'badge bg-danger');
+                        }
+                    } catch (e) {
+                        if (statusEl) {
+                            statusEl.textContent = 'finished';
+                            statusEl.className = 'badge bg-info';
+                        }
+                    }
+
+                    if (journalsEs) {
+                        journalsEs.close();
+                        journalsEs = null;
+                    }
+
+                    // Reload from DB to get updated zoho_status and update UI
+                    try {
+                        const dbRes = await fetch('/api/db/journals');
+                        const dbData = await dbRes.json();
+                        if (dbData.journals && dbData.journals.length > 0) {
+                            allJournals = dbData.journals;
+                            applyFilters();
+                        }
+                    } catch (e) {
+                        console.warn("Could not reload journals from DB:", e);
+                    }
+
+                    showSyncResult(resData);
+                    selectAllVisible(false);
+                    resolve();
+                });
+
+                journalsEs.onerror = () => {
+                    if (journalsEs) {
+                        journalsEs.close();
+                        journalsEs = null;
+                    }
+                    if (statusEl && statusEl.textContent === 'running') {
+                        statusEl.textContent = 'disconnected';
+                        statusEl.className = 'badge bg-secondary';
+                    }
+                    resolve();
+                };
+            });
         }
 
         /* ---- Detail modal ---- */
@@ -728,9 +1469,16 @@
                         <tbody>
                             ${debitEntries.map(item => {
                                 debitTotal += item.amount;
+                                const bills = item.bill_allocations || [];
+                                const billsHtml = bills.length > 0
+                                    ? `<div class="small text-muted mt-1">${bills.map(b => `<span class="badge bg-light text-dark border me-1"><i class="bi bi-tag-fill text-primary me-1"></i>${b.bill_type || 'Ref'}: <strong>${b.name}</strong> (₹${b.amount})</span>`).join('')}</div>`
+                                    : '';
                                 return `
                                 <tr>
-                                    <td>${item.ledger_name}</td>
+                                    <td>
+                                        <div class="fw-semibold">${item.ledger_name}</div>
+                                        ${billsHtml}
+                                    </td>
                                     <td><span class="badge bg-secondary">${item.ledger_type || 'N/A'}</span></td>
                                     <td>${item.tag_category || '-'}</td>
                                     <td>${item.tag_option || '-'}</td>
@@ -757,9 +1505,16 @@
                         <tbody>
                             ${creditEntries.map(item => {
                                 creditTotal += item.amount;
+                                const bills = item.bill_allocations || [];
+                                const billsHtml = bills.length > 0
+                                    ? `<div class="small text-muted mt-1">${bills.map(b => `<span class="badge bg-light text-dark border me-1"><i class="bi bi-tag-fill text-success me-1"></i>${b.bill_type || 'Ref'}: <strong>${b.name}</strong> (₹${b.amount})</span>`).join('')}</div>`
+                                    : '';
                                 return `
                                 <tr>
-                                    <td>${item.ledger_name}</td>
+                                    <td>
+                                        <div class="fw-semibold">${item.ledger_name}</div>
+                                        ${billsHtml}
+                                    </td>
                                     <td><span class="badge bg-secondary">${item.ledger_type || 'N/A'}</span></td>
                                     <td>${item.tag_category || '-'}</td>
                                     <td>${item.tag_option || '-'}</td>
@@ -826,7 +1581,7 @@
                     // Backend returns { journals: [...], stats: {...} }
                     const uploaded = result.journals || result.data || [];
                     if (uploaded.length === 0) {
-                        alert('No journals found in the uploaded JSON file.\nMake sure it is a Tally Journal voucher export.');
+                        showCustomAlert('No journals found in the uploaded JSON file.\nMake sure it is a Tally Journal voucher export.', 'error');
                         return;
                     }
                     allJournals = uploaded;
@@ -845,17 +1600,16 @@
                     });
                     stats.total_debit   = td;
                     stats.total_credit  = tc;
-
-                    localStorage.setItem('journalsData', JSON.stringify({ journals: allJournals, stats }));
                     updateKPIs(stats);
+                    buildMonthPills();
                     applyFilters();
-                    alert(`Uploaded ${allJournals.length} journal(s) from JSON file.`);
+                    showCustomAlert(`Uploaded ${allJournals.length} journal(s) from JSON file.`, 'success');
                 } else {
-                    alert('Error uploading JSON: ' + (result.error || 'Unknown error'));
+                    showCustomAlert('Error uploading JSON: ' + (result.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert('Failed to upload JSON file. See console for details.');
+                showCustomAlert('Failed to upload JSON file. See console for details.', 'error');
             } finally {
                 uploadBtn.innerHTML = originalText;
                 uploadBtn.disabled = false;
@@ -1032,6 +1786,193 @@
           }
         } catch(e) {}
       })();
+
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ACCOUNT-WISE JOURNAL MATCHING & RECONCILIATION LOGIC
+      // ═══════════════════════════════════════════════════════════════════════════
+      let rawAccountReconList = [];
+      let accountReconSummary = {};
+
+      async function openAccountWiseModal() {
+        const modal = new bootstrap.Modal(document.getElementById('accountWiseModal'));
+        modal.show();
+
+        const badge = document.getElementById('accReconMonthBadge');
+        if (badge) {
+          badge.textContent = (activeMonth && activeMonth !== 'ALL') ? (MONTH_NAMES[activeMonth] || activeMonth) : 'All Months';
+        }
+
+        const tbody = document.getElementById('accReconTableBody');
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span> Calculating Account Matching & Differences...</td></tr>`;
+
+        try {
+          const monthQuery = (activeMonth && activeMonth !== 'ALL') ? activeMonth : '';
+          const res = await fetch(`/api/journals/reconciliation/account_wise?month=${monthQuery}`);
+          const data = await res.json();
+
+          if (data.status === 'success' && data.accounts) {
+            rawAccountReconList = data.accounts;
+            accountReconSummary = data.summary || {};
+            updateAccountReconSummary(accountReconSummary);
+            renderAccountReconTable(rawAccountReconList);
+          } else {
+            tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger">Failed to load account breakdown: ${data.error || 'Unknown error'}</td></tr>`;
+          }
+        } catch(e) {
+          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger">Network Error: ${e.message}</td></tr>`;
+        }
+      }
+
+      function updateAccountReconSummary(summary) {
+        if (!summary) return;
+        const fmtCurr = (v) => '₹' + (v || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        
+        if (document.getElementById('reconTotalAccounts')) document.getElementById('reconTotalAccounts').innerText = (summary.total_accounts || 0).toLocaleString();
+        if (document.getElementById('reconTotalDebit')) document.getElementById('reconTotalDebit').innerText = fmtCurr(summary.total_debit || 0);
+        if (document.getElementById('reconTotalCredit')) document.getElementById('reconTotalCredit').innerText = fmtCurr(summary.total_credit || 0);
+
+        const diff = summary.net_difference || 0;
+        const diffCard = document.getElementById('reconDiffCard');
+        const diffEl = document.getElementById('reconNetDiff');
+        if (diffEl) {
+          diffEl.innerText = fmtCurr(Math.abs(diff));
+          diffEl.className = 'fs-4 fw-bold ' + (Math.abs(diff) < 0.01 ? 'text-success' : 'text-danger');
+        }
+        if (diffCard) {
+          diffCard.className = 'p-3 rounded-3 border text-center ' + (Math.abs(diff) < 0.01 ? 'bg-success-subtle border-success' : 'bg-danger-subtle border-danger');
+        }
+      }
+
+      function renderAccountReconTable(accounts) {
+        const tbody = document.getElementById('accReconTableBody');
+        if (!tbody) return;
+
+        if (!accounts || accounts.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">No accounts match the current filter.</td></tr>`;
+          return;
+        }
+
+        const fmtCurr = (v) => '₹' + (v || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        tbody.innerHTML = accounts.map((acc, i) => {
+          const isBalanced = acc.is_balanced;
+          const diff = acc.net_difference;
+          const diffAbs = Math.abs(diff);
+
+          const statusBadge = isBalanced
+            ? '<span class="badge bg-success text-white px-2 py-1"><i class="bi bi-check-circle me-1"></i>Balanced</span>'
+            : `<span class="badge bg-danger text-white px-2 py-1" title="Unbalanced in journals"><i class="bi bi-exclamation-triangle-fill me-1"></i>Diff: ${fmtCurr(diffAbs)}</span>`;
+
+          const rowBg = isBalanced ? '' : 'style="background-color: #fff9f9;"';
+          const drillId = `drill_acc_${i}`;
+
+          const vchs = (acc.journals || []).map(v => {
+            const billInfo = (v.bill_allocations || []).map(b => `<span class="badge bg-light text-dark border ms-1">${b.bill_type || 'Ref'}: <strong>${b.name}</strong></span>`).join('');
+            const isDr = (v.debit_or_credit === 'debit');
+            return `
+              <div class="d-flex align-items-center justify-content-between py-1 border-bottom border-light small">
+                <div>
+                  <span class="fw-bold text-primary">Vch #${v.journal_number}</span>
+                  <span class="text-muted ms-2">${formatDate(v.date)}</span>
+                  ${billInfo}
+                </div>
+                <div>
+                  <span class="fw-bold ${isDr ? 'text-danger' : 'text-success'}">
+                    ${isDr ? 'Dr ' : 'Cr '} ${fmtCurr(v.amount)}
+                  </span>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          return `
+            <tr ${rowBg} style="cursor: pointer;" onclick="toggleAccDrill('${drillId}')">
+              <td class="text-muted small">${i + 1}</td>
+              <td>
+                <div class="d-flex align-items-center justify-content-between">
+                  <span class="fw-bold text-dark">${acc.ledger_name}</span>
+                  <i class="bi bi-chevron-down text-muted small ms-2" id="icon_${drillId}"></i>
+                </div>
+              </td>
+              <td><span class="badge bg-secondary">${acc.ledger_type || 'account'}</span></td>
+              <td class="text-center fw-bold"><span class="badge bg-light text-dark border">${acc.entry_count} vchs</span></td>
+              <td class="text-end fw-bold text-danger">${fmtCurr(acc.total_debit)}</td>
+              <td class="text-end fw-bold text-success">${fmtCurr(acc.total_credit)}</td>
+              <td class="text-end fw-bold ${isBalanced ? 'text-success' : 'text-danger'}">
+                ${diff > 0 ? '+' : ''}${fmtCurr(diff)}
+              </td>
+              <td class="text-center">${statusBadge}</td>
+            </tr>
+            <tr id="${drillId}" style="display: none; background: #f8fafc;">
+              <td colspan="8" class="p-3">
+                <div class="card border-0 shadow-sm">
+                  <div class="card-header bg-light py-1 px-3 d-flex justify-content-between align-items-center">
+                    <span class="small fw-bold text-muted"><i class="bi bi-journal-text me-1"></i>Journal Postings for ${acc.ledger_name} (${acc.entry_count} total entries)</span>
+                    <span class="badge bg-secondary small">${acc.ledger_type}</span>
+                  </div>
+                  <div class="card-body p-2" style="max-height: 200px; overflow-y: auto;">
+                    ${vchs || '<div class="text-muted small">No vouchers recorded.</div>'}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      function toggleAccDrill(drillId) {
+        const row = document.getElementById(drillId);
+        const icon = document.getElementById(`icon_${drillId}`);
+        if (!row) return;
+        const isHidden = (row.style.display === 'none');
+        row.style.display = isHidden ? 'table-row' : 'none';
+        if (icon) {
+          icon.className = isHidden ? 'bi bi-chevron-up text-primary small ms-2' : 'bi bi-chevron-down text-muted small ms-2';
+        }
+      }
+
+      function filterAccountReconTable() {
+        const q = (document.getElementById('accSearchInput')?.value || '').toLowerCase().trim();
+        const statusFilter = document.getElementById('accFilterStatus')?.value || 'ALL';
+
+        let filtered = rawAccountReconList;
+
+        if (q) {
+          filtered = filtered.filter(a => (a.ledger_name || '').toLowerCase().includes(q));
+        }
+
+        if (statusFilter === 'VARIANCE') {
+          filtered = filtered.filter(a => !a.is_balanced);
+        } else if (statusFilter === 'BALANCED') {
+          filtered = filtered.filter(a => a.is_balanced);
+        }
+
+        renderAccountReconTable(filtered);
+      }
+
+      function exportAccountWiseExcel() {
+        if (!rawAccountReconList || rawAccountReconList.length === 0) {
+          alert('No account data to export!');
+          return;
+        }
+
+        const rows = rawAccountReconList.map((a, i) => ({
+          '#': i + 1,
+          'Account / Ledger Name': a.ledger_name,
+          'Account Type': a.ledger_type,
+          'Total Entries': a.entry_count,
+          'Total Debit (₹)': a.total_debit,
+          'Total Credit (₹)': a.total_credit,
+          'Net Difference (₹)': a.net_difference,
+          'Status': a.is_balanced ? 'Balanced' : 'Variance'
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Account_Matching");
+        const filename = `Journal_Account_Matching_${activeMonth || 'ALL'}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        XLSX.writeFile(wb, filename);
+      }
 
     </script>
 </body>

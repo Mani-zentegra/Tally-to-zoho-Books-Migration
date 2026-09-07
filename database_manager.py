@@ -2,8 +2,23 @@ import sqlite3
 import os
 import atexit
 import contextvars
+import json
+from datetime import datetime, timedelta
 
-DEFAULT_DB_NAME = "tally_data.db"
+LAST_ACTIVE_DB_FILE = os.path.join(os.path.dirname(__file__), ".last_active_db")
+
+def get_default_db_name():
+    if os.path.exists(LAST_ACTIVE_DB_FILE):
+        try:
+            with open(LAST_ACTIVE_DB_FILE, "r") as f:
+                name = f.read().strip()
+                if name.endswith(".db"):
+                    return name
+        except Exception:
+            pass
+    return "tally_data.db"
+
+DEFAULT_DB_NAME = get_default_db_name()
 _DB_NAME_VAR = contextvars.ContextVar("db_name", default=DEFAULT_DB_NAME)
 
 _WRITE_CONN = {}  # db_name -> sqlite3.Connection
@@ -19,13 +34,33 @@ def close_write_connection():
 
 atexit.register(close_write_connection)
 
+_LAST_SEEN_DB = None
+
 def set_active_db(db_name: str):
     """
     Set the active DB for the current context (request/session).
     db_name should be a filename like 'tally_data.db' (no directories).
     """
+    global _LAST_SEEN_DB
     if not db_name:
-        db_name = DEFAULT_DB_NAME
+        db_name = get_default_db_name()
+    
+    # Save the active db name to a file so it persists across restarts
+    try:
+        with open(LAST_ACTIVE_DB_FILE, "w") as f:
+            f.write(db_name)
+    except Exception:
+        pass
+    
+    # Print a loud alert in the terminal if the database context actually switches
+    if _LAST_SEEN_DB and _LAST_SEEN_DB != db_name:
+        print("\n" + "="*60)
+        print("⚠️  ALERT: DATABASE CONTEXT SWITCHED!")
+        print(f"⚠️  FROM:  {_LAST_SEEN_DB}")
+        print(f"⚠️  TO:    {db_name}")
+        print("="*60 + "\n")
+        
+    _LAST_SEEN_DB = db_name
     _DB_NAME_VAR.set(db_name)
 
 def get_active_db() -> str:
@@ -39,20 +74,156 @@ def get_db_connection(write=False, db_name=None):
     db_to_use = get_active_db()
 
     if write:
-        if db_to_use not in _WRITE_CONN or _WRITE_CONN[db_to_use] is None:
-            _WRITE_CONN[db_to_use] = sqlite3.connect(
+        conn = _WRITE_CONN.get(db_to_use)
+        if conn is not None:
+            try:
+                conn.execute("SELECT 1")
+            except Exception:
+                conn = None
+                _WRITE_CONN.pop(db_to_use, None)
+
+        if conn is None:
+            conn = sqlite3.connect(
                 db_to_use,
                 timeout=60,
                 isolation_level=None,  # autocommit
                 check_same_thread=False
             )
-            _WRITE_CONN[db_to_use].row_factory = sqlite3.Row
+            conn.row_factory = sqlite3.Row
+            _WRITE_CONN[db_to_use] = conn
         return _WRITE_CONN[db_to_use]
 
     conn = sqlite3.connect(db_to_use, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
+
+def clear_all_masters(db_name=None, clear_groups=True, clear_ledgers=True, clear_items=True):
+    if db_name:
+        set_active_db(db_name)
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    
+    if clear_groups:
+        cursor.execute("DELETE FROM groups")
+    if clear_ledgers:
+        cursor.execute("DELETE FROM ledgers")
+    
+    if clear_items:
+        try:
+            cursor.execute("DELETE FROM items")
+        except Exception:
+            pass
+            
+    if clear_groups and clear_ledgers:
+        try:
+            cursor.execute("DELETE FROM cost_centres")
+            cursor.execute("DELETE FROM cost_categories")
+        except Exception:
+            pass
+
+
+def save_zoho_master_cache(master_type: str, data, org_id: str = ""):
+    """Save any Zoho master data (dict or list) as JSON into zoho_masters_cache table"""
+    try:
+        conn = get_db_connection(write=True)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS zoho_masters_cache (
+                master_type TEXT PRIMARY KEY,
+                data_json TEXT,
+                org_id TEXT,
+                updated_at TEXT
+            )
+        ''')
+        data_json = json.dumps(data)
+        updated_at = datetime.now().isoformat()
+        cursor.execute('''
+            INSERT INTO zoho_masters_cache (master_type, data_json, org_id, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(master_type) DO UPDATE SET
+                data_json = excluded.data_json,
+                org_id = excluded.org_id,
+                updated_at = excluded.updated_at
+        ''', (master_type, data_json, org_id, updated_at))
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to save zoho master '{master_type}' to cache: {e}")
+
+def get_zoho_master_cache(master_type: str, expected_org_id: str = ""):
+    """Get Zoho master data from zoho_masters_cache table — returns None if missing or org mismatched"""
+    try:
+        conn = get_db_connection(write=False)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='zoho_masters_cache'")
+        if not cursor.fetchone():
+            return None
+        cursor.execute("SELECT data_json, org_id FROM zoho_masters_cache WHERE master_type = ?", (master_type,))
+        row = cursor.fetchone()
+        if row:
+            cached_org = row["org_id"] or ""
+            if expected_org_id and cached_org and cached_org != expected_org_id:
+                return None
+            return json.loads(row["data_json"])
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to load zoho master '{master_type}' from cache: {e}")
+    return None
+
+def save_zoho_token_to_db(access_token: str, expires_in_seconds: int = 3600, org_id: str = "", refresh_token: str = ""):
+    """Save/update access_token, expiry_time, and org_id in zoho_tokens SQLite table"""
+    try:
+        conn = get_db_connection(write=True)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS zoho_tokens (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                access_token TEXT,
+                refresh_token TEXT,
+                expiry_time TEXT,
+                organization_id TEXT
+            )
+        ''')
+        expiry_ts = (datetime.now() + timedelta(seconds=expires_in_seconds)).isoformat()
+        cursor.execute('''
+            INSERT INTO zoho_tokens (id, access_token, refresh_token, expiry_time, organization_id)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                access_token = excluded.access_token,
+                refresh_token = CASE WHEN excluded.refresh_token != '' THEN excluded.refresh_token ELSE zoho_tokens.refresh_token END,
+                expiry_time = excluded.expiry_time,
+                organization_id = excluded.organization_id
+        ''', (access_token, refresh_token, expiry_ts, org_id))
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to save zoho token to DB: {e}")
+
+def get_zoho_token_from_db(org_id: str = ""):
+    """
+    Get access_token from zoho_tokens table if expiry_time > current time.
+    Returns access_token string if valid, or None if expired/missing.
+    """
+    try:
+        conn = get_db_connection(write=False)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='zoho_tokens'")
+        if not cursor.fetchone():
+            return None
+        cursor.execute("SELECT access_token, expiry_time, organization_id FROM zoho_tokens WHERE id = 1")
+        row = cursor.fetchone()
+        if row:
+            acc_token = row["access_token"]
+            exp_str = row["expiry_time"]
+            token_org = row["organization_id"]
+            
+            if org_id and token_org and token_org != org_id:
+                return None
+                
+            if acc_token and exp_str:
+                exp_dt = datetime.fromisoformat(exp_str)
+                # Keep a 5-minute safety buffer before expiry
+                if datetime.now() + timedelta(seconds=300) < exp_dt:
+                    return acc_token
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to load zoho token from DB: {e}")
+    return None
 
 def init_db(db_name=None):
     if db_name:
@@ -63,6 +234,38 @@ def init_db(db_name=None):
     # Enable WAL ONCE (no retry, no loop)
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA synchronous=NORMAL;")
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS zoho_masters_cache (
+            master_type TEXT PRIMARY KEY,
+            data_json TEXT,
+            org_id TEXT,
+            updated_at TEXT
+        )
+    ''')
+
+    # ZOHO INVOICES LOCAL CACHE TABLE (for Zero-API reconciliation and instant matching)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS zoho_invoices_cache (
+            invoice_id TEXT PRIMARY KEY,
+            invoice_number TEXT,
+            customer_id TEXT,
+            customer_name TEXT,
+            date TEXT,
+            status TEXT,
+            total REAL DEFAULT 0,
+            balance REAL DEFAULT 0,
+            adjustment REAL DEFAULT 0,
+            adjustment_description TEXT,
+            sub_total REAL DEFAULT 0,
+            tax_total REAL DEFAULT 0,
+            raw_json TEXT,
+            updated_at TEXT
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_zoho_inv_no ON zoho_invoices_cache(invoice_number)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_zoho_inv_date ON zoho_invoices_cache(date)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_zoho_inv_cust ON zoho_invoices_cache(customer_name)')
 
     # GROUPS TABLE
     cursor.execute('''
@@ -105,6 +308,7 @@ def init_db(db_name=None):
             type TEXT, -- 'customer', 'vendor', 'other'
             
             address TEXT,
+            city TEXT,
             state TEXT,
             country TEXT,
             pincode TEXT,
@@ -114,13 +318,24 @@ def init_db(db_name=None):
             gstin TEXT,
             gst_reg_type TEXT,
             pan TEXT,
+            original_address TEXT,
             
             opening_balance REAL,
             closing_balance REAL,
             
-            description TEXT
+            description TEXT,
+            zoho_contact_id TEXT,
+            zoho_status TEXT DEFAULT 'pending'
         )
     ''')
+    try:
+        cursor.execute("ALTER TABLE ledgers ADD COLUMN zoho_contact_id TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE ledgers ADD COLUMN zoho_status TEXT DEFAULT 'pending'")
+    except Exception:
+        pass
     
     # ITEMS TABLE
     # Expanded to include all fields found in items_backend.py
@@ -209,7 +424,13 @@ def init_db(db_name=None):
             
             -- Timestamps
             created_at TEXT,
-            updated_at TEXT
+            updated_at TEXT,
+            
+            -- Sync Tracking
+            zoho_payment_id TEXT,
+            zoho_status TEXT,
+            zoho_error TEXT,
+            payment_category TEXT
         )
     ''')
 
@@ -219,12 +440,29 @@ def init_db(db_name=None):
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_receipts_tally_guid ON receipts(tally_guid) WHERE tally_guid != ''")
     except Exception:
         pass
+        
+    try:
+        cursor.execute("ALTER TABLE receipts ADD COLUMN zoho_payment_id TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE receipts ADD COLUMN zoho_status TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE receipts ADD COLUMN zoho_error TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE receipts ADD COLUMN payment_category TEXT")
+    except Exception:
+        pass
     
     # PAYMENTS MADE
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments_made (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            payment_number TEXT UNIQUE,
+            payment_number TEXT,
             voucher_type TEXT,
             date TEXT,
             
@@ -239,6 +477,7 @@ def init_db(db_name=None):
             amount REAL,
             reference_number TEXT,
             against_reference TEXT,
+            payment_category TEXT,  -- bill_payment, vendor_advance, direct_expense
             
             -- Narration
             narration TEXT,
@@ -252,13 +491,19 @@ def init_db(db_name=None):
             rounding_amount REAL,
             rounding_ledger TEXT,
             
+            -- Zoho Sync Fields
+            zoho_payment_id TEXT,
+            zoho_status TEXT,
+            zoho_error TEXT,
+            
             -- System Fields
             tally_guid TEXT,
             company_name TEXT,
             
             -- Timestamps
             created_at TEXT,
-            updated_at TEXT
+            updated_at TEXT,
+            UNIQUE(payment_number, date)
         )
     ''')
 
@@ -286,11 +531,30 @@ def init_db(db_name=None):
             from_date TEXT,
             to_date   TEXT,
 
+            -- Zoho Sync Status
+            zoho_journal_id TEXT,
+            zoho_status     TEXT DEFAULT 'pending',
+            zoho_error      TEXT,
+
             -- Timestamps
             created_at TEXT,
             updated_at TEXT
         )
     ''')
+
+    # Add missing columns to journals table if they don't exist
+    try:
+        cursor.execute("ALTER TABLE journals ADD COLUMN zoho_journal_id TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE journals ADD COLUMN zoho_status TEXT DEFAULT 'pending'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE journals ADD COLUMN zoho_error TEXT")
+    except Exception:
+        pass
 
     # Index on date for fast range queries
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_journals_date ON journals(date)')
@@ -329,6 +593,9 @@ def init_db(db_name=None):
 
             -- Totals
             rounding_off   REAL DEFAULT 0,
+            tds_amount     REAL DEFAULT 0,
+            tds_ledger     TEXT,
+            tds_rate       REAL DEFAULT 0,
             subtotal       REAL DEFAULT 0,
             tax_total      REAL DEFAULT 0,
             total_amount   REAL DEFAULT 0,
@@ -347,6 +614,27 @@ def init_db(db_name=None):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_invoices_date          ON invoices(date)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_invoices_customer_name ON invoices(customer_name)')
 
+    try:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN zoho_invoice_id TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN zoho_status TEXT DEFAULT 'pending'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN tds_amount REAL DEFAULT 0")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN tds_ledger TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN tds_rate REAL DEFAULT 0")
+    except Exception:
+        pass
+
     # BILLS TABLE
     # Stores every Purchase bill fetched from Tally — all fields, no exceptions
     cursor.execute('''
@@ -354,7 +642,7 @@ def init_db(db_name=None):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
             -- Voucher identity
-            bill_number    TEXT UNIQUE,
+            bill_number    TEXT,
             date           TEXT,
             vendor_name    TEXT,
 
@@ -387,13 +675,27 @@ def init_db(db_name=None):
 
             -- Timestamps
             created_at     TEXT,
-            updated_at     TEXT
+            updated_at     TEXT,
+            UNIQUE(bill_number, date)
         )
     ''')
 
     # Indexes for bills
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_bills_date        ON bills(date)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_bills_vendor_name ON bills(vendor_name)')
+
+    try:
+        cursor.execute("ALTER TABLE bills ADD COLUMN zoho_bill_id TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE bills ADD COLUMN zoho_status TEXT DEFAULT 'pending'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE bills ADD COLUMN zoho_error TEXT")
+    except Exception:
+        pass
 
     # SALES ORDERS TABLE
     # Stores every Sales Order fetched from Tally — all fields, no exceptions
@@ -522,6 +824,19 @@ def init_db(db_name=None):
         )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_contra_date ON contra_vouchers(date)')
+
+    try:
+        cursor.execute("ALTER TABLE contra_vouchers ADD COLUMN zoho_transfer_id TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE contra_vouchers ADD COLUMN zoho_status TEXT DEFAULT 'pending'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE contra_vouchers ADD COLUMN zoho_error TEXT")
+    except Exception:
+        pass
 
     # CREDIT NOTES TABLE
     cursor.execute('''
@@ -680,6 +995,27 @@ def get_contra_by_number(contra_number):
         print(f" Error getting contra {contra_number} from DB: {e}")
         return None
 
+def update_contra_status(contra_number, zoho_transfer_id=None, zoho_status='synced', zoho_error=None):
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    try:
+        from datetime import datetime
+        cursor.execute('''
+            UPDATE contra_vouchers 
+            SET zoho_transfer_id = coalesce(?, zoho_transfer_id),
+                zoho_status = ?,
+                zoho_error = ?,
+                updated_at = ?
+            WHERE contra_number = ?
+        ''', (zoho_transfer_id, zoho_status, zoho_error, datetime.now().isoformat(), contra_number))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Error updating contra status for {contra_number}: {e}")
+        return False
+    finally:
+        conn.close()
+
 
 def insert_or_update_ledger(data):
     conn = get_db_connection(write=True)
@@ -688,16 +1024,17 @@ def insert_or_update_ledger(data):
     try:
         cursor.execute('''
             INSERT INTO ledgers (
-                name, parent, type, address, state, country, pincode, email, phone,
-                gstin, gst_reg_type, pan, opening_balance, closing_balance
+                name, parent, type, address, city, state, country, pincode, email, phone,
+                gstin, gst_reg_type, pan, opening_balance, closing_balance, original_address
             ) VALUES (
-                :name, :parent, :type, :address, :state, :country, :pincode, :email, :phone,
-                :gstin, :gst_reg_type, :pan, :opening_balance, :closing_balance
+                :name, :parent, :type, :address, :city, :state, :country, :pincode, :email, :phone,
+                :gstin, :gst_reg_type, :pan, :opening_balance, :closing_balance, :original_address
             )
             ON CONFLICT(name) DO UPDATE SET
                 parent=excluded.parent,
                 type=excluded.type,
                 address=excluded.address,
+                city=excluded.city,
                 state=excluded.state,
                 country=excluded.country,
                 pincode=excluded.pincode,
@@ -707,7 +1044,8 @@ def insert_or_update_ledger(data):
                 gst_reg_type=excluded.gst_reg_type,
                 pan=excluded.pan,
                 opening_balance=excluded.opening_balance,
-                closing_balance=excluded.closing_balance
+                closing_balance=excluded.closing_balance,
+                original_address=excluded.original_address
         ''', data)
         conn.commit()
     except Exception as e:
@@ -1369,6 +1707,47 @@ def get_journals_by_date_range(from_date, to_date, limit=None):
         result = result[:limit]
     return result
 
+
+def update_journal_zoho_status(journal_number, zoho_journal_id=None, status='synced', error=None):
+    """Update Zoho sync status for a journal voucher in SQLite."""
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        UPDATE journals 
+        SET zoho_journal_id = COALESCE(?, zoho_journal_id),
+            zoho_status = ?,
+            zoho_error = ?,
+            updated_at = ?
+        WHERE journal_number = ?
+        ''',
+        (
+            str(zoho_journal_id) if zoho_journal_id else None,
+            str(status),
+            str(error) if error else None,
+            datetime.now().isoformat(),
+            str(journal_number)
+        )
+    )
+    conn.commit()
+    print(f"    update_journal_zoho_status: marked {journal_number} as {status} (ID: {zoho_journal_id})")
+
+
+def update_journals_status_bulk(journal_numbers, status='synced'):
+    """Bulk update Zoho sync status for multiple journals."""
+    if not journal_numbers:
+        return
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    now_str = datetime.now().isoformat()
+    for j_no in journal_numbers:
+        cursor.execute(
+            'UPDATE journals SET zoho_status = ?, updated_at = ? WHERE journal_number = ?',
+            (str(status), now_str, str(j_no))
+        )
+    conn.commit()
+    print(f"    update_journals_status_bulk: marked {len(journal_numbers)} journals as {status}")
+
 # INVOICES FUNCTIONS
 # ---------------------------------------------------
 
@@ -1382,6 +1761,23 @@ def bulk_save_invoices(invoices_data):
     if not invoices_data:
         return
 
+    import re
+    PREFIX_PATTERN = r'^(ship\s*to\s*:|bill\s*to\s*:|consignee\s*:|c/o\s*:?)\s*'
+    for inv in invoices_data:
+        if isinstance(inv, dict) and inv.get('customer_name'):
+            inv['customer_name'] = re.sub(PREFIX_PATTERN, '', str(inv['customer_name']).strip(), flags=re.IGNORECASE).strip()
+
+    for inv in invoices_data:
+        if isinstance(inv, dict):
+            if inv.get('customer_name'):
+                inv['customer_name'] = re.sub(PREFIX_PATTERN, '', str(inv['customer_name']).strip(), flags=re.IGNORECASE).strip()
+            if 'tds_amount' not in inv:
+                inv['tds_amount'] = 0.0
+            if 'tds_ledger' not in inv:
+                inv['tds_ledger'] = ''
+            if 'tds_rate' not in inv:
+                inv['tds_rate'] = 0.0
+
     conn = get_db_connection(write=True)
     cursor = conn.cursor()
 
@@ -1393,7 +1789,8 @@ def bulk_save_invoices(invoices_data):
             sales_ledger, narration,
             irn, irn_ack_no, irn_ack_date,
             line_items, taxes,
-            rounding_off, subtotal, tax_total, total_amount,
+            rounding_off, tds_amount, tds_ledger, tds_rate,
+            subtotal, tax_total, total_amount,
             from_date, to_date,
             created_at, updated_at
         ) VALUES (
@@ -1402,7 +1799,8 @@ def bulk_save_invoices(invoices_data):
             :sales_ledger, :narration,
             :irn, :irn_ack_no, :irn_ack_date,
             :line_items, :taxes,
-            :rounding_off, :subtotal, :tax_total, :total_amount,
+            :rounding_off, :tds_amount, :tds_ledger, :tds_rate,
+            :subtotal, :tax_total, :total_amount,
             :from_date, :to_date,
             :created_at, :updated_at
         )
@@ -1420,6 +1818,9 @@ def bulk_save_invoices(invoices_data):
             line_items    = excluded.line_items,
             taxes         = excluded.taxes,
             rounding_off  = excluded.rounding_off,
+            tds_amount    = excluded.tds_amount,
+            tds_ledger    = excluded.tds_ledger,
+            tds_rate      = excluded.tds_rate,
             subtotal      = excluded.subtotal,
             tax_total     = excluded.tax_total,
             total_amount  = excluded.total_amount,
@@ -1431,6 +1832,39 @@ def bulk_save_invoices(invoices_data):
     )
     conn.commit()
     print(f"    bulk_save_invoices: saved {len(invoices_data)} invoices to DB")
+
+
+def clear_invoices():
+    """Clear all records from the invoices table for clean overwrite imports."""
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM invoices')
+    conn.commit()
+    print("    clear_invoices: cleared all existing invoices from DB")
+
+
+def update_invoice_zoho_status(invoice_number, zoho_invoice_id, status='synced'):
+    """Update Zoho sync status for an invoice in SQLite."""
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    cursor.execute(
+        'UPDATE invoices SET zoho_invoice_id = ?, zoho_status = ?, updated_at = ? WHERE invoice_number = ?',
+        (str(zoho_invoice_id), str(status), datetime.now().isoformat(), str(invoice_number))
+    )
+    conn.commit()
+    print(f"    update_invoice_zoho_status: marked {invoice_number} as {status} (ID: {zoho_invoice_id})")
+
+
+def update_ledger_zoho_status(name, zoho_contact_id, status='synced'):
+    """Update Zoho sync status for a ledger / contact in SQLite."""
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    cursor.execute(
+        'UPDATE ledgers SET zoho_contact_id = ?, zoho_status = ? WHERE name = ?',
+        (str(zoho_contact_id or ''), str(status), str(name))
+    )
+    conn.commit()
+    print(f"    update_ledger_zoho_status: marked {name} as {status} (ID: {zoho_contact_id})")
 
 
 def get_all_invoices():
@@ -1498,8 +1932,7 @@ def bulk_save_bills(bills_data):
             :from_date, :to_date,
             :created_at, :updated_at
         )
-        ON CONFLICT(bill_number) DO UPDATE SET
-            date             = excluded.date,
+        ON CONFLICT(bill_number, date) DO UPDATE SET
             vendor_name      = excluded.vendor_name,
             po_number        = excluded.po_number,
             reference_number = excluded.reference_number,
@@ -1736,25 +2169,57 @@ def get_purchase_orders_by_date_range(from_date, to_date):
 def bulk_save_payments_made(payments_data):
     if not payments_data:
         return
+    
+    # Ensure all expected dictionary keys exist for named SQL parameters
+    sanitized_data = []
+    for item in payments_data:
+        d = dict(item)
+        d.setdefault("payment_number", "")
+        d.setdefault("voucher_type", "Payment")
+        d.setdefault("date", "")
+        d.setdefault("vendor_name", "")
+        d.setdefault("vendor_ledger_amount", 0.0)
+        d.setdefault("payment_mode", "")
+        d.setdefault("bank_account", "")
+        d.setdefault("account_current_balance", 0.0)
+        d.setdefault("amount", 0.0)
+        d.setdefault("reference_number", "")
+        d.setdefault("against_reference", "")
+        d.setdefault("payment_category", "")
+        d.setdefault("narration", "")
+        d.setdefault("bill_allocations", "[]")
+        d.setdefault("ledger_entries", "[]")
+        d.setdefault("cost_center_allocations", "[]")
+        d.setdefault("rounding_amount", 0.0)
+        d.setdefault("rounding_ledger", "")
+        d.setdefault("zoho_payment_id", None)
+        d.setdefault("zoho_status", "pending")
+        d.setdefault("zoho_error", None)
+        d.setdefault("tally_guid", "")
+        d.setdefault("company_name", "")
+        d.setdefault("created_at", datetime.now().isoformat())
+        d.setdefault("updated_at", datetime.now().isoformat())
+        sanitized_data.append(d)
+
     conn = get_db_connection(write=True)
     cursor = conn.cursor()
     cursor.executemany('''
         INSERT INTO payments_made (
             payment_number, voucher_type, date, vendor_name, vendor_ledger_amount,
             payment_mode, bank_account, account_current_balance, amount,
-            reference_number, against_reference, narration,
+            reference_number, against_reference, payment_category, narration,
             bill_allocations, ledger_entries, cost_center_allocations,
-            rounding_amount, rounding_ledger, tally_guid, company_name,
-            created_at, updated_at
+            rounding_amount, rounding_ledger, zoho_payment_id, zoho_status, zoho_error,
+            tally_guid, company_name, created_at, updated_at
         ) VALUES (
             :payment_number, :voucher_type, :date, :vendor_name, :vendor_ledger_amount,
             :payment_mode, :bank_account, :account_current_balance, :amount,
-            :reference_number, :against_reference, :narration,
+            :reference_number, :against_reference, :payment_category, :narration,
             :bill_allocations, :ledger_entries, :cost_center_allocations,
-            :rounding_amount, :rounding_ledger, :tally_guid, :company_name,
-            :created_at, :updated_at
-        ) ON CONFLICT(payment_number) DO UPDATE SET
-            date = excluded.date,
+            :rounding_amount, :rounding_ledger, :zoho_payment_id, :zoho_status, :zoho_error,
+            :tally_guid, :company_name, :created_at, :updated_at
+        ) ON CONFLICT(payment_number, date) DO UPDATE SET
+            voucher_type = excluded.voucher_type,
             vendor_name = excluded.vendor_name,
             vendor_ledger_amount = excluded.vendor_ledger_amount,
             payment_mode = excluded.payment_mode,
@@ -1763,14 +2228,38 @@ def bulk_save_payments_made(payments_data):
             amount = excluded.amount,
             reference_number = excluded.reference_number,
             against_reference = excluded.against_reference,
+            payment_category = excluded.payment_category,
             narration = excluded.narration,
             bill_allocations = excluded.bill_allocations,
             ledger_entries = excluded.ledger_entries,
             cost_center_allocations = excluded.cost_center_allocations,
             rounding_amount = excluded.rounding_amount,
             rounding_ledger = excluded.rounding_ledger,
+            zoho_payment_id = COALESCE(excluded.zoho_payment_id, payments_made.zoho_payment_id),
+            zoho_status = COALESCE(excluded.zoho_status, payments_made.zoho_status),
+            zoho_error = COALESCE(excluded.zoho_error, payments_made.zoho_error),
             updated_at = excluded.updated_at
-    ''', payments_data)
+    ''', sanitized_data)
+    conn.commit()
+
+def update_payment_made_status(payment_number, date, zoho_payment_id, zoho_status="synced", zoho_error=""):
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE payments_made
+        SET zoho_payment_id = ?, zoho_status = ?, zoho_error = ?, updated_at = ?
+        WHERE payment_number = ? AND date = ?
+    ''', (zoho_payment_id, zoho_status, zoho_error, datetime.now().isoformat(), str(payment_number), str(date)))
+    conn.commit()
+
+def update_receipt_status(receipt_number, zoho_payment_id=None, zoho_status=None, zoho_error=None):
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE receipts
+        SET zoho_payment_id = ?, zoho_status = ?, zoho_error = ?, updated_at = ?
+        WHERE receipt_number = ?
+    ''', (zoho_payment_id, zoho_status, zoho_error, datetime.now().isoformat(), str(receipt_number)))
     conn.commit()
 
 def get_all_payments_made():
@@ -1876,3 +2365,144 @@ def get_debit_note_by_number(debit_note_number):
     row = conn.execute('SELECT * FROM debit_notes WHERE debit_note_number = ?', (debit_note_number,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+# ---------------------------------------------------
+# ZOHO INVOICES LOCAL CACHE FUNCTIONS (Zero-API Matching)
+# ---------------------------------------------------
+
+def bulk_save_zoho_invoices_cache(zoho_invoices):
+    """
+    Bulk save/update Zoho invoice records into zoho_invoices_cache table.
+    zoho_invoices: list of dicts from Zoho Books API /invoices
+    """
+    if not zoho_invoices:
+        return 0
+
+    now = datetime.now().isoformat()
+    db_rows = []
+
+    for z in zoho_invoices:
+        iid = str(z.get("invoice_id") or "").strip()
+        if not iid:
+            continue
+        ino = str(z.get("invoice_number") or "").strip()
+        cid = str(z.get("customer_id") or "").strip()
+        cname = str(z.get("customer_name") or "").strip()
+        dt = str(z.get("date") or "").strip()
+        st = str(z.get("status") or "").strip()
+        tot = float(z.get("total") or 0.0)
+        bal = float(z.get("balance") or 0.0)
+        adj = float(z.get("adjustment") or 0.0)
+        adj_desc = str(z.get("adjustment_description") or "").strip()
+        sub = float(z.get("sub_total") or 0.0)
+        tax = float(z.get("tax_total") or 0.0)
+        raw = json.dumps(z)
+
+        db_rows.append({
+            "invoice_id": iid,
+            "invoice_number": ino,
+            "customer_id": cid,
+            "customer_name": cname,
+            "date": dt,
+            "status": st,
+            "total": tot,
+            "balance": bal,
+            "adjustment": adj,
+            "adjustment_description": adj_desc,
+            "sub_total": sub,
+            "tax_total": tax,
+            "raw_json": raw,
+            "updated_at": now
+        })
+
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    cursor.executemany('''
+        INSERT INTO zoho_invoices_cache (
+            invoice_id, invoice_number, customer_id, customer_name,
+            date, status, total, balance, adjustment, adjustment_description,
+            sub_total, tax_total, raw_json, updated_at
+        ) VALUES (
+            :invoice_id, :invoice_number, :customer_id, :customer_name,
+            :date, :status, :total, :balance, :adjustment, :adjustment_description,
+            :sub_total, :tax_total, :raw_json, :updated_at
+        ) ON CONFLICT(invoice_id) DO UPDATE SET
+            invoice_number = excluded.invoice_number,
+            customer_id = excluded.customer_id,
+            customer_name = excluded.customer_name,
+            date = excluded.date,
+            status = excluded.status,
+            total = excluded.total,
+            balance = excluded.balance,
+            adjustment = excluded.adjustment,
+            adjustment_description = excluded.adjustment_description,
+            sub_total = excluded.sub_total,
+            tax_total = excluded.tax_total,
+            raw_json = excluded.raw_json,
+            updated_at = excluded.updated_at
+    ''', db_rows)
+    conn.commit()
+    return len(db_rows)
+
+def get_all_cached_zoho_invoices(month=None):
+    """
+    Return all cached Zoho invoices from zoho_invoices_cache table.
+    Optional month filter in YYYYMM format (e.g. '201604')
+    """
+    conn = get_db_connection(write=False)
+    cursor = conn.cursor()
+    if month and month != 'ALL':
+        # date format in Zoho is usually YYYY-MM-DD
+        if len(month) == 6:
+            prefix = f"{month[:4]}-{month[4:]}"
+        else:
+            prefix = month
+        rows = cursor.execute('SELECT * FROM zoho_invoices_cache WHERE date LIKE ? ORDER BY date ASC', (f"{prefix}%",)).fetchall()
+    else:
+        rows = cursor.execute('SELECT * FROM zoho_invoices_cache ORDER BY date ASC').fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_cached_zoho_invoice_by_number(invoice_number):
+    """Query cached Zoho invoice by invoice number or sanitized invoice number"""
+    if not invoice_number:
+        return None
+    import re
+    conn = get_db_connection(write=False)
+    cursor = conn.cursor()
+    clean = re.sub(r'[^a-zA-Z0-9]', '', str(invoice_number).lower())
+    
+    # 1. Exact match
+    row = cursor.execute('SELECT * FROM zoho_invoices_cache WHERE LOWER(invoice_number) = ?', (str(invoice_number).strip().lower(),)).fetchone()
+    if row:
+        conn.close()
+        return dict(row)
+        
+    # 2. Iterate and match alphanumeric
+    all_rows = cursor.execute('SELECT * FROM zoho_invoices_cache').fetchall()
+    conn.close()
+    for r in all_rows:
+        r_no = str(r['invoice_number'] or '')
+        if re.sub(r'[^a-zA-Z0-9]', '', r_no.lower()) == clean:
+            return dict(r)
+    return None
+
+def update_zoho_invoice_cache_record(invoice_id, new_total, new_adjustment=0.0, new_balance=None):
+    """Update total and adjustment for an invoice in the local cache immediately after a PUT request"""
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    now = datetime.now().isoformat()
+    if new_balance is not None:
+        cursor.execute('''
+            UPDATE zoho_invoices_cache
+            SET total = ?, adjustment = ?, balance = ?, updated_at = ?
+            WHERE invoice_id = ?
+        ''', (float(new_total), float(new_adjustment), float(new_balance), str(now), str(invoice_id)))
+    else:
+        cursor.execute('''
+            UPDATE zoho_invoices_cache
+            SET total = ?, adjustment = ?, updated_at = ?
+            WHERE invoice_id = ?
+        ''', (float(new_total), float(new_adjustment), str(now), str(invoice_id)))
+    conn.commit()
+

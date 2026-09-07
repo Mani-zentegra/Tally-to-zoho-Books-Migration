@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -8,6 +8,74 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
         {% include '_sidebar_styles.html' %}
     {% include '_zb_theme.html' %}
+    <style>
+        .month-pill {
+            display: inline-block;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 20px;
+            border: 1px solid #dee2e6;
+            background: #fff;
+            color: #495057;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .month-pill:hover {
+            background: #e9ecef;
+            border-color: #ced4da;
+            color: #212529;
+        }
+        .month-pill.active {
+            background: #0288d1;
+            border-color: #0288d1;
+            color: #fff !important;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(2,136,209,0.3);
+        }
+        .kpi-card {
+            border-radius: 12px;
+            border-left: 4px solid #5e35b1;
+            background: #fff;
+            padding: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            height: 100%;
+        }
+        .kpi-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6c757d;
+            margin-bottom: 4px;
+        }
+        .kpi-value {
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .terminal-console {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 12.5px;
+            line-height: 1.5;
+            padding: 14px;
+            border-radius: 8px;
+            max-height: 280px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .badge-clickable {
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+        .badge-clickable:hover {
+            transform: scale(1.05);
+        }
+    </style>
 </head>
 <body>
     {% set active_page = 'contra' %}
@@ -18,197 +86,269 @@
             {% set page_subtitle = 'Import contra vouchers and sync to Zoho.' %}
             {% include '_topbar.html' %}
 
-            {% set steps_title = 'Contra: Recommended Steps' %}
+            {% set steps_title = 'Contra: Recommended Migration Steps' %}
             {% set steps = [
-              'Confirm Ledgers (Bank/Cash) are synced to Zoho.',
-              'Import contra XML into the active DB.',
-              'Review from/to account mapping.',
-              'Sync to Zoho and fix any failed vouchers.'
+              'Confirm Bank & Cash accounts are mapped and exist in Zoho Books.',
+              'Import Contra vouchers from Tally into local SQLite database.',
+              'Review transfers, filter by Financial Year & Month, and check totals.',
+              'Sync to Zoho Books as Bank Transfers and verify synced status.'
             ] %}
             {% include '_steps_card.html' %}
 
-
-
-    <!-- NAVBAR -->
-    <nav class="navbar navbar-expand-lg navbar-light sticky-top px-4">
-        <a class="navbar-brand d-flex align-items-center" href="#">
-            <i class="bi bi-wallet2 text-primary fs-3 me-2"></i>
-            <span class="fw-bold text-primary">TallySoft</span>
-        </a>
-        <div class="collapse navbar-collapse ms-4">
-            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/ledgers"><i class="bi bi-journal-text me-1"></i> Ledgers</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/items"><i class="bi bi-box-seam me-1"></i> Items</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/journals"><i class="bi bi-journal-bookmark me-1"></i> Journals</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/invoices"><i class="bi bi-receipt me-1"></i> Invoices</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/bills"><i class="bi bi-file-earmark-text me-1"></i> Bills</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/receipts"><i class="bi bi-cash-coin me-1"></i> Payment Received</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/payments_made"><i class="bi bi-cash-stack me-1"></i> Payments Made</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link active" href="/contra"><i class="bi bi-arrow-left-right me-1"></i> Contra</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/credit_note"><i class="bi bi-file-earmark-minus me-1"></i> Credit Note</a>
-                </li>
-                <li class="nav-item me-3">
-                    <a class="nav-link" href="/debit_note"><i class="bi bi-file-earmark-plus me-1"></i> Debit Note</a>
-                </li>
-            </ul>
-        </div>
-    </nav>
-
-    <div class="container-fluid p-0">
-
-        <!-- HEADER & ACTIONS -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h4 class="fw-bold mb-1">Contra Vouchers</h4>
-                <p class="text-muted small mb-0">View and sync Bank/Cash transfers (Contra) from Tally</p>
+            <!-- LIVE CONSOLE -->
+            <div id="contraConsoleCard" class="content-card p-3 mb-4 shadow-sm" style="display: none;">
+                <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+                    <div class="fw-semibold text-dark d-flex align-items-center gap-2">
+                        <i class="bi bi-terminal text-primary fs-5"></i>
+                        <span>Live Terminal Console</span>
+                        <span id="contraConsoleStatus" class="badge bg-secondary ms-1">Idle</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <button id="contraStopBtn" class="btn btn-sm btn-outline-danger" onclick="stopContraJob()" disabled>
+                            <i class="bi bi-stop-circle me-1"></i> Stop Job
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="clearContraConsole()">
+                            <i class="bi bi-trash3 me-1"></i> Clear
+                        </button>
+                        <button class="btn btn-sm btn-light border" onclick="showContraConsole(false)" title="Hide Console">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </div>
+                <pre id="contraConsole" class="terminal-console mb-0"></pre>
             </div>
-            <div class="d-flex gap-2">
-                <button id="syncBtn" onclick="syncZoho()" class="btn btn-outline-secondary d-flex align-items-center">
-                    <i class="bi bi-arrow-repeat me-2"></i> Sync to Zoho (Transfers)
-                </button>
-                <input type="file" id="jsonUpload" accept=".json" style="display: none;" onchange="uploadJson(event)">
-                <button id="uploadBtn" onclick="document.getElementById('jsonUpload').click()" class="btn btn-warning d-flex align-items-center">
-                    <i class="bi bi-upload me-2"></i> Upload JSON
-                </button>
-                <button id="importBtn" onclick="fetchData()" class="btn btn-secondary d-flex align-items-center">
-                    <i class="bi bi-cloud-download me-2"></i> Import from Tally
-                </button>
-            </div>
-        </div>
 
-        <!-- DATE RANGE SELECTOR -->
-        <div class="content-card mb-4 p-3 border-top border-secondary border-3">
-            <div class="row g-3 align-items-end">
-                <div class="col-md-3">
-                    <label class="form-label small fw-bold">Select Month</label>
-                    <select id="monthFilter" class="form-select" onchange="updateDatesByMonth()">
-                        <option value="">-- Custom Range --</option>
-                        <option value="04">April</option>
-                        <option value="05">May</option>
-                        <option value="06">June</option>
-                        <option value="07">July</option>
-                        <option value="08">August</option>
-                        <option value="09">September</option>
-                        <option value="10">October</option>
-                        <option value="11">November</option>
-                        <option value="12">December</option>
-                        <option value="01">January</option>
-                        <option value="02">February</option>
-                        <option value="03">March</option>
-                    </select>
+            <div class="container-fluid p-0">
+                <!-- STEP 1 — GET DATA -->
+                <div class="content-card mb-3 border-start border-4" style="border-color:#5e35b1 !important;">
+                    <div class="p-3">
+                        <div class="d-flex align-items-center gap-2 mb-3">
+                            <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#5e35b1;font-size:13px;">STEP 1</span>
+                            <span class="fw-semibold">Get Data</span>
+                            <span class="text-muted small">— Import contra vouchers from Tally or upload JSON</span>
+                        </div>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold">From Date</label>
+                                <input type="date" id="fromDate" class="form-control" value="2018-04-01">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold">To Date</label>
+                                <input type="date" id="toDate" class="form-control" value="2026-03-31">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small fw-bold">Limit (optional)</label>
+                                <input type="number" id="limitInput" class="form-control" placeholder="All">
+                            </div>
+                            <div class="col-md-2">
+                                <button id="importBtn" onclick="fetchData()" class="btn btn-primary w-100 fw-semibold">
+                                    <i class="bi bi-cloud-download me-1"></i> Import Tally
+                                </button>
+                            </div>
+                            <div class="col-md-2">
+                                <input type="file" id="jsonUpload" accept=".json" style="display:none" onchange="uploadJson(event)">
+                                <button id="uploadBtn" onclick="document.getElementById('jsonUpload').click()" class="btn btn-outline-primary w-100 fw-semibold">
+                                    <i class="bi bi-upload me-1"></i> Upload JSON
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">From Date</label>
-                    <input type="date" id="fromDate" class="form-control" value="2025-04-01">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">To Date</label>
-                    <input type="date" id="toDate" class="form-control" value="2025-04-30">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">Limit (optional)</label>
-                    <input type="number" id="limitInput" class="form-control" placeholder="All">
-                </div>
-                <div class="col-md-3">
-                    <button onclick="fetchData()" class="btn btn-secondary w-100">
-                        <i class="bi bi-funnel me-2"></i> Apply Filter
-                    </button>
-                </div>
-            </div>
-        </div>
 
-        <!-- KPI CARDS -->
-        <div class="row g-3 mb-4">
-            <div class="col-md-6">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Contra Vouchers</div>
-                    <div class="kpi-value" id="total-contras">0</div>
+                <!-- STEP 2 — REVIEW & FILTER -->
+                <div class="content-card mb-3 border-start border-4" style="border-color:#0288d1 !important;">
+                    <div class="p-3">
+                        <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                            <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#0288d1;font-size:13px;">STEP 2</span>
+                            <span class="fw-semibold">Review &amp; Filter</span>
+                            <span class="text-muted small">— Filter by Financial Year, month, sync status, and inspect totals</span>
+                            <span id="activeMonthBadge" class="badge bg-primary ms-2" style="display:none;"></span>
+                        </div>
+
+                        <!-- Month Quick Filter Bar — Dynamic Year + Month Selector -->
+                        <div class="d-flex align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border" id="monthPillsRow">
+                            <span class="text-muted small fw-bold text-nowrap ms-1"><i class="bi bi-calendar3 me-1"></i>Filter Month:</span>
+                            
+                            <select id="yearPillSelect" class="form-select form-select-sm border-secondary fw-semibold text-primary" style="width: auto; min-width: 130px;" onchange="onYearPillSelectChange(this.value)">
+                                <option value="ALL">All Years</option>
+                            </select>
+
+                            <button id="allMonthsPillBtn" class="month-pill fw-bold flex-shrink-0 active" onclick="quickMonth('ALL')">ALL (All Months)</button>
+
+                            <div id="monthPillsContainer" class="d-flex align-items-center gap-1 overflow-auto flex-grow-1 py-1" style="white-space: nowrap; scrollbar-width: thin;">
+                                <!-- Dynamic Month Pills inserted here -->
+                            </div>
+
+                            <button class="btn btn-sm btn-outline-secondary text-nowrap flex-shrink-0 ms-1" onclick="clearMonthFilter()">
+                                <i class="bi bi-x-circle me-1"></i>Clear
+                            </button>
+                        </div>
+
+                        <!-- 4 KPI Cards -->
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <div class="kpi-card" style="border-color:#5e35b1">
+                                    <div class="kpi-label">Total Contra Vouchers</div>
+                                    <div class="kpi-value text-dark" id="total-contras">0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="kpi-card" style="border-color:#43a047">
+                                    <div class="kpi-label">Total Amount Transferred</div>
+                                    <div class="kpi-value text-success" id="total-amount">₹0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="kpi-card" style="border-color:#2e7d32">
+                                    <div class="kpi-label"><i class="bi bi-check-circle me-1 text-success"></i>Synced to Zoho</div>
+                                    <div class="kpi-value text-success" id="synced-count">0</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="kpi-card" style="border-color:#ed6c02">
+                                    <div class="kpi-label"><i class="bi bi-clock me-1 text-warning"></i>Pending Sync</div>
+                                    <div class="kpi-value text-warning" id="pending-count">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STEP 3 — SYNC TO ZOHO -->
+                <div class="content-card mb-3 border-start border-4" style="border-color:#2e7d32 !important;">
+                    <div class="p-3 d-flex align-items-center flex-wrap gap-3">
+                        <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
+                        <span class="fw-semibold">Sync to Zoho Books (Bank Transfers)</span>
+                        <div class="d-flex gap-2 ms-auto flex-wrap">
+                            <button onclick="downloadSyncErrorsExcel()" class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" title="Download Sync Error Report">
+                                <i class="bi bi-file-earmark-excel"></i> Download Error Excel
+                            </button>
+                            <button onclick="syncSelected()" id="syncSelectedBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1" disabled>
+                                <i class="bi bi-cloud-upload"></i> Sync Selected (<span id="btnSelectCount">0</span>)
+                            </button>
+                            <button onclick="syncFilteredMonth()" id="syncMonthBtn" class="btn btn-outline-success btn-sm d-flex align-items-center gap-1">
+                                <i class="bi bi-calendar2-check"></i> Sync Filtered Month
+                            </button>
+                            <button onclick="syncZoho()" id="syncAllBtn" class="btn btn-dark btn-sm d-flex align-items-center gap-1">
+                                <i class="bi bi-arrow-repeat"></i> Sync All
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SELECTION ACTION BAR -->
+                <div id="selectionBar" class="alert alert-primary d-flex align-items-center justify-content-between py-2 px-3 mb-3 shadow-sm border" style="display:none; border-radius:10px;">
+                    <span><i class="bi bi-check2-square me-2 text-primary fs-5"></i><strong id="selectionCount">0</strong> contra(s) selected</span>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <button class="btn btn-sm btn-success fw-semibold" onclick="markSelectedSynced('synced')" title="Mark selected contras as Synced in Database">
+                            <i class="bi bi-check-circle-fill me-1"></i> Mark as Synced (Manual)
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary fw-semibold" onclick="markSelectedSynced('pending')" title="Mark selected contras as Pending">
+                            <i class="bi bi-arrow-counterclockwise me-1"></i> Mark as Pending
+                        </button>
+                        <button class="btn btn-sm btn-primary fw-semibold" onclick="syncSelected()">
+                            <i class="bi bi-cloud-upload me-1"></i> Sync to Zoho API
+                        </button>
+                        <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(true)">Select All Visible</button>
+                        <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(false)">Clear Selection</button>
+                    </div>
+                </div>
+
+                <!-- TABLE & FILTER CARD -->
+                <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
+
+                <div class="content-card mb-4 shadow-sm">
+                    <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <div class="input-group" style="max-width: 280px;">
+                                <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                                <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search contra #, account, amount..." onkeyup="handleSearch()">
+                            </div>
+                            <select id="zohoStatusFilter" class="form-select form-select-sm border-secondary fw-semibold" style="width: auto;" onchange="applyFilters()">
+                                <option value="ALL">All Zoho Statuses</option>
+                                <option value="SYNCED">Synced to Zoho</option>
+                                <option value="PENDING">Pending Sync</option>
+                                <option value="FAILED">Failed / Errors</option>
+                            </select>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center flex-wrap">
+                            <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
+                              onclick="document.getElementById('fmZohoFieldsInput').click()"
+                              title="Upload Zoho Books sample XLSX or CSV">
+                              <i class="bi bi-file-earmark-arrow-up"></i> Import Zoho Fields
+                            </button>
+                            <button id="fmMappingBtn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1"
+                              disabled onclick="fmOpenModal()" title="Map Tally DB fields to Zoho Books fields">
+                              <i class="bi bi-diagram-2"></i> Field Mapping
+                            </button>
+                            <button id="fmExportBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1"
+                              style="display:none" onclick="window.open('/api/field-mapping/' + FM_MODULE + '/export','_blank')">
+                              <i class="bi bi-cloud-upload"></i> Export for Zoho
+                            </button>
+                        </div>
+                    </div>
+                    <div id="fmStatusBar" class="px-3 py-1 small" style="display:none"></div>
+
+                    <div class="table-responsive" style="max-height: 620px;">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="sticky-top" style="background:#f8fafc;">
+                                <tr>
+                                    <th style="width:40px;">
+                                        <input type="checkbox" id="selectAllChk" class="form-check-input" title="Select / Deselect All" onchange="selectAllVisible(this.checked)">
+                                    </th>
+                                    <th>Contra #</th>
+                                    <th>Date</th>
+                                    <th>From Account (Credit)</th>
+                                    <th>To Account (Debit)</th>
+                                    <th class="text-end">Amount Transferred</th>
+                                    <th class="text-center">Zoho Sync Status</th>
+                                    <th class="text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableBody">
+                                <tr>
+                                    <td colspan="8" class="text-center py-5 text-muted">
+                                        <i class="bi bi-arrow-left-right fs-1 mb-2 d-block text-secondary"></i>
+                                        Loading contra vouchers...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
-            <div class="col-md-6">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Amount Transferred</div>
-                    <div class="kpi-value" id="total-amount">₹0</div>
-                </div>
-            </div>
-        </div>
 
-        <!-- TABLE -->
-              <!-- FIELD MAPPING: hidden file input -->
-      <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
-
-<div class="content-card">
-            <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div class="input-group" style="max-width: 300px;">
-                    <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search contras..." onkeyup="handleSearch()">
-                </div>
-                <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
-                      onclick="document.getElementById('fmZohoFieldsInput').click()"
-                      title="Upload Zoho Books sample XLSX or CSV">
-                      <i class="bi bi-file-earmark-arrow-up"></i> Import Zoho Fields
-                    </button>
-                    <button id="fmMappingBtn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1"
-                      disabled onclick="fmOpenModal()" title="Map Tally DB fields to Zoho Books fields">
-                      <i class="bi bi-diagram-2"></i> Field Mapping
-                    </button>
-                    <button id="fmExportBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1"
-                      style="display:none" onclick="window.open('/api/field-mapping/' + FM_MODULE + '/export','_blank')">
-                      <i class="bi bi-cloud-upload"></i> Export for Zoho
-                    </button>
-                </div>
-            </div>
-            <div id="fmStatusBar" class="px-3 py-1 small" style="display:none"></div>
-</div>
-            </div>
-            <div class="table-responsive" style="max-height: 600px;">
-                <table class="table table-hover align-middle mb-0">
-                    <thead class="sticky-top">
-                        <tr>
-                            <th>Contra #</th>
-                            <th>Date</th>
-                            <th>From (Credit)</th>
-                            <th>To (Debit)</th>
-                            <th class="text-end">Amount Transferred</th>
-                            <th class="text-center">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tableBody">
-                        <tr><td colspan="6" class="text-center py-4 text-muted">No Data Found. Try fetching or uploading.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-    </div>
-
-    <!-- MODAL -->
+    <!-- CONTRA DETAIL MODAL -->
     <div class="modal fade" id="contraModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content border-0 shadow-lg">
                 <div class="modal-header bg-secondary text-white rounded-top border-0">
-                    <h5 class="modal-title"><i class="bi bi-arrow-left-right me-2"></i> Contra Details</h5>
+                    <h5 class="modal-title"><i class="bi bi-arrow-left-right me-2"></i> Contra Voucher Details</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4" id="contraDetails">
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ZOHO SYNC REPORT MODAL (Contra) -->
+    <div class="modal fade" id="syncReportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-bar-graph me-2"></i>Zoho Sync Report &mdash; Contra</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4" id="syncReportBody"></div>
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger fw-bold" onclick="downloadSyncErrorsExcel()">
+                        <i class="bi bi-file-earmark-excel me-2"></i>Download Error Excel (.xlsx)
+                    </button>
                 </div>
             </div>
         </div>
@@ -261,61 +401,479 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // --------------------------------------------------
+        // Global State
+        // --------------------------------------------------
         let allContras = [];
-        let totalAmount = 0;
+        let filteredContras = [];
+        let selectedContraNumbers = new Set();
+        let activeMonth = 'ALL';
+        let selectedYearFilter = 'ALL';
+        let allUniqueYmList = [];
+        let allUniqueYears = [];
+        let contraJobId = null;
+        let contraEventSource = null;
+        let lastSyncResult = null;
 
+        // --------------------------------------------------
+        // Initial Page Load
+        // --------------------------------------------------
         document.addEventListener('DOMContentLoaded', async () => {
-            // Set initial month
-            document.getElementById('monthFilter').value = '04';
-            updateDatesByMonth();
+            await loadDbContras();
+        });
 
+        async function loadDbContras() {
             try {
                 const res = await fetch('/api/db/contra');
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.contra_vouchers && data.contra_vouchers.length > 0) {
-                        allContras = data.contra_vouchers;
-                        totalAmount = data.total_amount;
-                        updateKPIs();
-                        renderContras(allContras);
-                        return;
-                    }
+                    allContras = data.contra_vouchers || [];
+                    buildMonthPills();
+                    applyFilters();
+                } else {
+                    renderContrasTable([]);
                 }
             } catch (err) {
-                console.log('Could not load from DB, trying localStorage...');
+                console.error('Failed to load contras from DB:', err);
+                renderContrasTable([]);
             }
-
-            const dataStr = localStorage.getItem('contraData');
-            if (dataStr) {
-                try {
-                    const data = JSON.parse(dataStr);
-                    allContras = data.contra_vouchers || [];
-                    totalAmount = data.total_amount || 0;
-                    updateKPIs();
-                    renderContras(allContras);
-                } catch(e) {}
-            }
-        });
-
-        function updateDatesByMonth() {
-            const m = document.getElementById('monthFilter').value;
-            if (!m) return;
-            // Assuming FY 2025-26
-            const year = (parseInt(m) >= 1 && parseInt(m) <= 3) ? '2026' : '2025';
-            const first = `${year}-${m}-01`;
-            const lastDay = new Date(year, parseInt(m), 0).getDate();
-            const last = `${year}-${m}-${lastDay}`;
-            document.getElementById('fromDate').value = first;
-            document.getElementById('toDate').value = last;
         }
 
-        function formatDateForAPI(dateInput) {
-            return dateInput.replace(/-/g, '');
+        // --------------------------------------------------
+        // Date Utilities
+        // --------------------------------------------------
+        function getNormalizedDate(raw) {
+            if (!raw) return '';
+            const s = String(raw).replace(/-/g, '').trim();
+            return s.length >= 8 ? s.slice(0, 8) : s;
         }
 
         function formatDate(d) {
-            if (!d || d.length !== 8) return d || '';
-            return d.slice(6,8) + '/' + d.slice(4,6) + '/' + d.slice(0,4);
+            if (!d) return '-';
+            const s = String(d).replace(/-/g, '').trim();
+            if (s.length === 8) {
+                return s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
+            }
+            return d;
+        }
+
+        function formatDateForAPI(dateInput) {
+            return (dateInput || '').replace(/-/g, '');
+        }
+
+        function getMonthName(ym) {
+            if (!ym || ym.length < 6) return ym || '';
+            const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const y = ym.slice(0, 4);
+            const m = parseInt(ym.slice(4, 6), 10);
+            return `${MONTHS[m] || ''} '${y.slice(2)}`;
+        }
+
+        // --------------------------------------------------
+        // Month & Year Filter Pills Logic
+        // --------------------------------------------------
+        function buildMonthPills() {
+            const ymSet = new Set();
+            const yearSet = new Set();
+
+            (allContras || []).forEach(c => {
+                const d = getNormalizedDate(c.date);
+                if (d && d.length >= 6) {
+                    ymSet.add(d.slice(0, 6));
+                    yearSet.add(d.slice(0, 4));
+                }
+            });
+
+            allUniqueYmList = Array.from(ymSet).sort();
+            allUniqueYears = Array.from(yearSet).sort();
+
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) {
+                const currentVal = yearSelect.value || selectedYearFilter;
+                yearSelect.innerHTML = '<option value="ALL">All Years (' + allUniqueYears.length + ')</option>';
+                allUniqueYears.forEach(y => {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = 'Year ' + y;
+                    yearSelect.appendChild(opt);
+                });
+                yearSelect.value = allUniqueYears.includes(currentVal) ? currentVal : 'ALL';
+                selectedYearFilter = yearSelect.value;
+            }
+
+            renderFilteredPills();
+        }
+
+        function renderFilteredPills() {
+            const container = document.getElementById('monthPillsContainer');
+            if (!container) return;
+
+            container.innerHTML = '';
+            let filteredYms = allUniqueYmList;
+            if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                filteredYms = allUniqueYmList.filter(ym => ym.startsWith(selectedYearFilter));
+            }
+
+            filteredYms.forEach(ym => {
+                const label = getMonthName(ym);
+                const btn = document.createElement('button');
+                btn.className = 'month-pill' + (ym === activeMonth ? ' active' : '');
+                btn.textContent = label;
+                btn.setAttribute('onclick', `quickMonth('${ym}')`);
+                container.appendChild(btn);
+            });
+        }
+
+        function quickMonth(ym) {
+            if (ym === 'ALL') {
+                activeMonth = 'ALL';
+            } else {
+                activeMonth = (activeMonth === ym) ? 'ALL' : ym;
+            }
+            updatePillUI();
+            applyFilters();
+        }
+
+        function clearMonthFilter() {
+            activeMonth = 'ALL';
+            selectedYearFilter = 'ALL';
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) yearSelect.value = 'ALL';
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function onYearPillSelectChange(selectedYear) {
+            selectedYearFilter = selectedYear;
+            if (selectedYear === 'ALL') {
+                activeMonth = 'ALL';
+            } else if (activeMonth !== 'ALL' && !activeMonth.startsWith(selectedYear)) {
+                activeMonth = 'ALL';
+            }
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function updatePillUI() {
+            document.querySelectorAll('.month-pill').forEach(btn => {
+                const onclickStr = btn.getAttribute('onclick') || '';
+                const match = onclickStr.match(/'([^']+)'/);
+                const ym = match ? match[1] : '';
+                btn.classList.toggle('active', ym === activeMonth);
+            });
+
+            const allPillBtn = document.getElementById('allMonthsPillBtn');
+            if (allPillBtn) {
+                if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    allPillBtn.textContent = `ALL (${selectedYearFilter})`;
+                } else {
+                    allPillBtn.textContent = 'ALL (All Months)';
+                }
+            }
+
+            const badge = document.getElementById('activeMonthBadge');
+            if (badge) {
+                if (activeMonth && activeMonth !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent = `Filtered: ${getMonthName(activeMonth)}`;
+                } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent = `Year ${selectedYearFilter} (All Months)`;
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        // --------------------------------------------------
+        // Filtering & KPI Updates
+        // --------------------------------------------------
+        function handleSearch() {
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const search = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+            const statusFilter = document.getElementById('zohoStatusFilter')?.value || 'ALL';
+
+            let list = allContras.slice();
+
+            // Month / Year Filter
+            if (activeMonth && activeMonth !== 'ALL') {
+                list = list.filter(c => getNormalizedDate(c.date).startsWith(activeMonth));
+            } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                list = list.filter(c => getNormalizedDate(c.date).startsWith(selectedYearFilter));
+            }
+
+            // Zoho Status Filter
+            if (statusFilter === 'SYNCED') {
+                list = list.filter(c => c.zoho_status === 'synced' || c.zoho_transfer_id);
+            } else if (statusFilter === 'PENDING') {
+                list = list.filter(c => c.zoho_status !== 'synced' && !c.zoho_transfer_id);
+            } else if (statusFilter === 'FAILED') {
+                list = list.filter(c => c.zoho_status === 'failed' || c.zoho_error);
+            }
+
+            // Search Query
+            if (search) {
+                list = list.filter(c => {
+                    const no = (c.contra_number || '').toLowerCase();
+                    const from = (c.from_account || '').toLowerCase();
+                    const to = (c.to_account || '').toLowerCase();
+                    const amt = String(c.amount || '');
+                    const narr = (c.narration || '').toLowerCase();
+                    return no.includes(search) || from.includes(search) || to.includes(search) || amt.includes(search) || narr.includes(search);
+                });
+            }
+
+            filteredContras = list;
+            renderContrasTable(filteredContras);
+            updateKPIs();
+        }
+
+        function updateKPIs() {
+            const list = filteredContras;
+            const totalCount = list.length;
+            const totalAmt = list.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+            const syncedCount = list.filter(c => c.zoho_status === 'synced' || c.zoho_transfer_id).length;
+            const pendingCount = totalCount - syncedCount;
+
+            document.getElementById('total-contras').innerText = totalCount.toLocaleString();
+            document.getElementById('total-amount').innerText = '₹' + Math.round(totalAmt).toLocaleString('en-IN');
+            document.getElementById('synced-count').innerText = syncedCount.toLocaleString();
+            document.getElementById('pending-count').innerText = pendingCount.toLocaleString();
+        }
+
+        // --------------------------------------------------
+        // Table Rendering & Selection
+        // --------------------------------------------------
+        function renderContrasTable(contras) {
+            const tbody = document.getElementById('tableBody');
+            if (!contras || contras.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-2 d-block mb-2 text-secondary"></i>No contra vouchers found matching current filters.</td></tr>';
+                updateSelectionUI();
+                return;
+            }
+
+            tbody.innerHTML = contras.map((c, idx) => {
+                const cNo = String(c.contra_number || '').trim();
+                const isSelected = selectedContraNumbers.has(cNo);
+                const isSynced = (c.zoho_status === 'synced' || Boolean(c.zoho_transfer_id));
+                const isFailed = (c.zoho_status === 'failed' || Boolean(c.zoho_error));
+
+                let statusBadge = '';
+                if (isSynced) {
+                    statusBadge = `<span class="badge bg-success-subtle text-success border border-success fw-bold badge-clickable" onclick="event.stopPropagation(); toggleSingleStatus('${cNo}', 'synced')" title="Click to toggle to Pending"><i class="bi bi-check-circle-fill me-1"></i>Synced</span>`;
+                } else if (isFailed) {
+                    statusBadge = `<span class="badge bg-danger-subtle text-danger border border-danger fw-bold badge-clickable" onclick="event.stopPropagation(); toggleSingleStatus('${cNo}', 'failed')" title="${c.zoho_error || 'Failed - click to toggle'}"><i class="bi bi-exclamation-octagon-fill me-1"></i>Failed</span>`;
+                } else {
+                    statusBadge = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning fw-semibold badge-clickable" onclick="event.stopPropagation(); toggleSingleStatus('${cNo}', 'pending')" title="Click to mark as Synced"><i class="bi bi-clock me-1"></i>Pending</span>`;
+                }
+
+                return `
+                    <tr style="cursor: pointer;" onclick="showDetails(${idx})">
+                        <td onclick="event.stopPropagation()">
+                            <input type="checkbox" class="form-check-input contra-chk" data-contra-no="${cNo}" ${isSelected ? 'checked' : ''} onchange="toggleContraSelect('${cNo}', this.checked)">
+                        </td>
+                        <td class="fw-bold text-primary">${c.contra_number || '-'}</td>
+                        <td>${formatDate(c.date)}</td>
+                        <td class="text-danger fw-semibold"><i class="bi bi-arrow-up-right me-1"></i>${c.from_account || '-'}</td>
+                        <td class="text-success fw-semibold"><i class="bi bi-arrow-down-left me-1"></i>${c.to_account || '-'}</td>
+                        <td class="text-end fw-bold">₹${(parseFloat(c.amount) || 0).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                        <td class="text-center">${statusBadge}</td>
+                        <td class="text-center" onclick="event.stopPropagation()">
+                            <button class="btn btn-sm btn-outline-secondary" onclick="showDetails(${idx})">
+                                <i class="bi bi-eye me-1"></i> View
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            updateSelectionUI();
+        }
+
+        function toggleContraSelect(contraNo, isChecked) {
+            if (!contraNo) return;
+            if (isChecked) {
+                selectedContraNumbers.add(contraNo);
+            } else {
+                selectedContraNumbers.delete(contraNo);
+            }
+            updateSelectionUI();
+        }
+
+        function selectAllVisible(checked) {
+            const visibleChks = document.querySelectorAll('.contra-chk');
+            visibleChks.forEach(chk => {
+                chk.checked = checked;
+                const cNo = chk.getAttribute('data-contra-no');
+                if (cNo) {
+                    if (checked) selectedContraNumbers.add(cNo);
+                    else selectedContraNumbers.delete(cNo);
+                }
+            });
+            const masterChk = document.getElementById('selectAllChk');
+            if (masterChk) masterChk.checked = checked;
+            updateSelectionUI();
+        }
+
+        function updateSelectionUI() {
+            const count = selectedContraNumbers.size;
+            const bar = document.getElementById('selectionBar');
+            const countEl = document.getElementById('selectionCount');
+            const btnCountEl = document.getElementById('btnSelectCount');
+            const syncBtn = document.getElementById('syncSelectedBtn');
+
+            if (countEl) countEl.innerText = count;
+            if (btnCountEl) btnCountEl.innerText = count;
+            if (syncBtn) syncBtn.disabled = (count === 0);
+
+            if (bar) {
+                bar.style.display = count > 0 ? 'flex' : 'none';
+            }
+
+            // Sync master checkbox state
+            const masterChk = document.getElementById('selectAllChk');
+            if (masterChk) {
+                const visibleChks = document.querySelectorAll('.contra-chk');
+                if (visibleChks.length > 0) {
+                    const allChecked = Array.from(visibleChks).every(c => c.checked);
+                    masterChk.checked = allChecked;
+                } else {
+                    masterChk.checked = false;
+                }
+            }
+        }
+
+        // --------------------------------------------------
+        // Live Terminal Console & Job Stream
+        // --------------------------------------------------
+        function showContraConsole(show=true) {
+            const card = document.getElementById('contraConsoleCard');
+            if (card) card.style.display = show ? 'block' : 'none';
+        }
+
+        function clearContraConsole() {
+            const pre = document.getElementById('contraConsole');
+            if (pre) pre.textContent = '';
+        }
+
+        function appendContraLine(line) {
+            const pre = document.getElementById('contraConsole');
+            if (!pre) return;
+            pre.textContent += (line || '') + '\n';
+            pre.scrollTop = pre.scrollHeight;
+        }
+
+        function setContraConsoleStatus(text, bgClass='bg-secondary') {
+            const el = document.getElementById('contraConsoleStatus');
+            if (el) {
+                el.textContent = text || 'Idle';
+                el.className = `badge ${bgClass} ms-1`;
+            }
+        }
+
+        async function stopContraJob() {
+            if (!contraJobId) return;
+            try {
+                await fetch(`/api/jobs/${contraJobId}/stop`, { method: 'POST' });
+                appendContraLine('⚠️ Stop requested by user...');
+                setContraConsoleStatus('Stopping...', 'bg-warning text-dark');
+            } catch (e) {
+                appendContraLine('Failed to request stop: ' + (e?.message || e));
+            }
+        }
+
+        async function startContraJob(url, payload, onDone) {
+            if (contraEventSource) {
+                try { contraEventSource.close(); } catch (e) {}
+                contraEventSource = null;
+            }
+
+            showContraConsole(true);
+            clearContraConsole();
+            setContraConsoleStatus('Starting...', 'bg-info text-dark');
+            const stopBtn = document.getElementById('contraStopBtn');
+            if (stopBtn) stopBtn.disabled = false;
+
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload || {})
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.status !== 'success' || !data.job_id) {
+                    throw new Error(data.message || data.error || 'Failed to start job');
+                }
+
+                contraJobId = data.job_id;
+                appendContraLine('🚀 Job initiated: ' + contraJobId);
+                setContraConsoleStatus('Running...', 'bg-primary');
+
+                contraEventSource = new EventSource(`/api/jobs/${contraJobId}/stream`);
+
+                contraEventSource.addEventListener('log', (ev) => {
+                    try {
+                        const d = JSON.parse(ev.data || '{}');
+                        if (d.message) appendContraLine(d.message);
+                    } catch (e) {}
+                });
+
+                contraEventSource.addEventListener('done', async (ev) => {
+                    let d = {};
+                    try { d = JSON.parse(ev.data || '{}'); } catch (e) {}
+                    const result = d.result || {};
+                    if (contraEventSource) {
+                        try { contraEventSource.close(); } catch (e) {}
+                        contraEventSource = null;
+                    }
+                    if (stopBtn) stopBtn.disabled = true;
+                    setContraConsoleStatus(result.status === 'success' ? 'Completed' : (result.status || 'Finished'), result.status === 'success' ? 'bg-success' : 'bg-warning text-dark');
+                    appendContraLine('🏁 Job finished with status: ' + (result.status || 'done'));
+                    
+                    await loadDbContras();
+
+                    if (typeof onDone === 'function') onDone(result);
+                });
+
+                contraEventSource.addEventListener('error', (err) => {
+                    if (contraEventSource) {
+                        try { contraEventSource.close(); } catch (e) {}
+                        contraEventSource = null;
+                    }
+                    if (stopBtn) stopBtn.disabled = true;
+                    setContraConsoleStatus('Stream Error', 'bg-danger');
+                    appendContraLine('⚠️ EventSource stream closed or connection error.');
+                });
+
+            } catch (err) {
+                appendContraLine('❌ Error: ' + err.message);
+                setContraConsoleStatus('Error', 'bg-danger');
+                if (stopBtn) stopBtn.disabled = true;
+                alert('Job Failed: ' + err.message);
+            }
+        }
+
+        // --------------------------------------------------
+        // Step 1: Import & Upload
+        // --------------------------------------------------
+        async function fetchData() {
+            const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
+            const toDate = formatDateForAPI(document.getElementById('toDate').value);
+            const limitVal = document.getElementById('limitInput').value;
+            const limit = limitVal ? parseInt(limitVal) : null;
+
+            await startContraJob('/api/contra/fetch/start', {
+                from_date: fromDate,
+                to_date: toDate,
+                limit: limit
+            }, (result) => {
+                alert(`Import finished!\nTotal vouchers fetched: ${result.count || allContras.length}`);
+            });
         }
 
         async function uploadJson(event) {
@@ -337,16 +895,10 @@
                 });
                 const data = await res.json();
                 if (data.error) {
-                    alert('Error: ' + data.error);
+                    alert('Upload Error: ' + data.error);
                 } else {
-                    allContras = data.contra_vouchers || [];
-                    totalAmount = data.total_amount || 0;
-                    localStorage.setItem('contraData', JSON.stringify({
-                        contra_vouchers: allContras,
-                        total_amount: totalAmount
-                    }));
-                    updateKPIs();
-                    renderContras(allContras);
+                    alert('Contra JSON uploaded successfully!');
+                    await loadDbContras();
                 }
             } catch (error) {
                 alert('Upload failed: ' + error.message);
@@ -357,148 +909,223 @@
             }
         }
 
-        async function fetchData() {
-            const btn = document.getElementById('importBtn');
-            const orig = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Importing...';
-
-            try {
-                const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
-                const toDate = formatDateForAPI(document.getElementById('toDate').value);
-                const limitVal = document.getElementById('limitInput').value;
-                const limit = limitVal ? parseInt(limitVal) : null;
-
-                const res = await fetch('/api/contra/fetch', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ from_date: fromDate, to_date: toDate, limit: limit })
-                });
-                const data = await res.json();
-
-                if (data.error) { alert('Error: ' + data.error); return; }
-
-                await new Promise(r => setTimeout(r, 500));
-                
-                try {
-                    const dbRes = await fetch('/api/db/contra');
-                    if (dbRes.ok) {
-                        const dbData = await dbRes.json();
-                        allContras = dbData.contra_vouchers || [];
-                        totalAmount = dbData.total_amount || 0;
-                        localStorage.setItem('contraData', JSON.stringify(dbData));
-                    } else {
-                        allContras = data.contra_vouchers || [];
-                        totalAmount = data.total_amount || 0;
-                        localStorage.setItem('contraData', JSON.stringify(data));
-                    }
-                } catch (e) {
-                    allContras = data.contra_vouchers || [];
-                    totalAmount = data.total_amount || 0;
-                }
-
-                updateKPIs();
-                renderContras(allContras);
-            } catch (err) {
-                console.error(err);
-                alert('Connection Error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = orig;
+        // --------------------------------------------------
+        // Step 3: Zoho Sync Logic
+        // --------------------------------------------------
+        async function syncSelected() {
+            if (selectedContraNumbers.size === 0) {
+                alert("Please select at least one contra voucher to sync.");
+                return;
             }
+            if (!confirm(`Sync ${selectedContraNumbers.size} selected contra voucher(s) to Zoho Books as Bank Transfers?`)) return;
+
+            const numbers = Array.from(selectedContraNumbers);
+            await startContraJob('/api/contra/zoho/sync/start', {
+                contra_numbers: numbers
+            }, (result) => {
+                lastSyncResult = result;
+                selectedContraNumbers.clear();
+                updateSelectionUI();
+                showSyncReport(result);
+            });
+        }
+
+        async function syncFilteredMonth() {
+            let label = "all available dates";
+            let fDate = "20180401";
+            let tDate = "20260331";
+
+            if (activeMonth && activeMonth !== 'ALL') {
+                label = getMonthName(activeMonth);
+                const y = activeMonth.slice(0, 4);
+                const m = activeMonth.slice(4, 6);
+                fDate = `${y}${m}01`;
+                const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
+                tDate = `${y}${m}${String(lastDay).padStart(2, '0')}`;
+            } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                label = `Financial Year ${selectedYearFilter}`;
+                fDate = `${selectedYearFilter}0401`;
+                const nextY = parseInt(selectedYearFilter) + 1;
+                tDate = `${nextY}0331`;
+            }
+
+            if (!confirm(`Sync all contra vouchers for ${label} to Zoho Books?`)) return;
+
+            await startContraJob('/api/contra/zoho/sync/start', {
+                from_date: fDate,
+                to_date: tDate
+            }, (result) => {
+                lastSyncResult = result;
+                showSyncReport(result);
+            });
         }
 
         async function syncZoho() {
-            if (!confirm("This will sync Contra vouchers to Zoho Books as Bank Transfers. Continue?")) return;
-
-            const btn = document.getElementById('syncBtn');
-            const orig = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+            if (!confirm("This will sync ALL pending Contra vouchers to Zoho Books as Bank Transfers. Continue?")) return;
 
             const fromDate = formatDateForAPI(document.getElementById('fromDate').value);
             const toDate = formatDateForAPI(document.getElementById('toDate').value);
 
-            try {
-                const res = await fetch('/api/contra/sync_zoho', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        contras: null,
-                        from_date: fromDate,
-                        to_date: toDate
-                    })
-                });
-                const data = await res.json();
-
-                if (data.status === 'success') {
-                    let msg = 'Zoho Sync Complete!\\n\\n';
-                    msg += `Total: ${data.total} | Success: ${data.success} | Failed: ${data.failed}\\n\\n`;
-                    if (data.failed > 0 && data.errors) {
-                        msg += 'Failed:\\n';
-                        data.errors.forEach((e, i) => {
-                            msg += `${i+1}. #${e.contra_number} - ${e.error}\\n`;
-                        });
-                    }
-                    alert(msg);
-                } else {
-                    alert('Sync Error: ' + data.message);
-                }
-            } catch (err) {
-                alert('Connection Error during Sync');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = orig;
-            }
+            await startContraJob('/api/contra/zoho/sync/start', {
+                from_date: fromDate,
+                to_date: toDate
+            }, (result) => {
+                lastSyncResult = result;
+                showSyncReport(result);
+            });
         }
 
-        function updateKPIs() {
-            document.getElementById('total-contras').innerText = allContras.length;
-            document.getElementById('total-amount').innerText = '₹' + (totalAmount || 0).toLocaleString();
-        }
-
-        function handleSearch() {
-            const q = document.getElementById('searchInput').value.toLowerCase();
-            const filtered = allContras.filter(c => 
-                (c.contra_number || '').toLowerCase().includes(q) ||
-                (c.from_account || '').toLowerCase().includes(q) ||
-                (c.to_account || '').toLowerCase().includes(q) ||
-                (c.amount || '').toString().includes(q)
-            );
-            renderContras(filtered);
-        }
-
-        function renderContras(contras) {
-            const tbody = document.getElementById('tableBody');
-            if (!contras || contras.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No Contras Found</td></tr>';
+        // --------------------------------------------------
+        // Manual Status Updates (Mark Synced / Pending)
+        // --------------------------------------------------
+        async function markSelectedSynced(status) {
+            if (selectedContraNumbers.size === 0) {
+                alert("Please select at least one contra voucher.");
                 return;
             }
-            tbody.innerHTML = contras.map((c, i) => `
-                <tr style="cursor:pointer" onclick="showDetails(${i})">
-                    <td class="fw-medium">${c.contra_number || '-'}</td>
-                    <td>${formatDate(c.date)}</td>
-                    <td class="text-danger">${c.from_account || '-'}</td>
-                    <td class="text-success">${c.to_account || '-'}</td>
-                    <td class="text-end fw-bold">₹${(c.amount || 0).toLocaleString()}</td>
-                    <td class="text-center">
-                        <button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); showDetails(${i})">
-                            <i class="bi bi-eye"></i> View
-                        </button>
-                    </td>
-                </tr>
-            `).join('');
+
+            const numbers = Array.from(selectedContraNumbers);
+            try {
+                const res = await fetch('/api/contra/mark_synced', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ contra_numbers: numbers, status: status })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    selectedContraNumbers.clear();
+                    await loadDbContras();
+                } else {
+                    alert('Error: ' + (data.message || data.error));
+                }
+            } catch (e) {
+                alert('Failed to update status: ' + e.message);
+            }
         }
 
+        async function toggleSingleStatus(contraNo, currentStatus) {
+            const newStatus = (currentStatus === 'synced') ? 'pending' : 'synced';
+            try {
+                const res = await fetch('/api/contra/mark_synced', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ contra_numbers: [contraNo], status: newStatus })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    await loadDbContras();
+                } else {
+                    alert('Error: ' + (data.message || data.error));
+                }
+            } catch (e) {
+                alert('Failed to update status: ' + e.message);
+            }
+        }
+
+        // --------------------------------------------------
+        // Sync Report & Error Download
+        // --------------------------------------------------
+        function showSyncReport(result) {
+            const modal = new bootstrap.Modal(document.getElementById('syncReportModal'));
+            const stats = result?.stats || { total: result?.total || 0, success: result?.success || 0, failed: result?.failed || 0 };
+            const errors = result?.errors || [];
+
+            let errorHtml = '';
+            if (errors.length > 0) {
+                errorHtml = `
+                    <h6 class="text-danger fw-bold mt-4 mb-2"><i class="bi bi-exclamation-triangle me-1"></i> Failed Vouchers (${errors.length})</h6>
+                    <div class="table-responsive" style="max-height: 250px;">
+                        <table class="table table-sm table-bordered mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Contra #</th>
+                                    <th>Date</th>
+                                    <th>From -> To</th>
+                                    <th class="text-end">Amount</th>
+                                    <th>Reason / Error</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${errors.map(e => `
+                                    <tr>
+                                        <td class="fw-bold">${e.contra_number || '-'}</td>
+                                        <td>${formatDate(e.date)}</td>
+                                        <td>${e.from_account || '-'} &rarr; ${e.to_account || '-'}</td>
+                                        <td class="text-end">₹${(parseFloat(e.amount) || 0).toLocaleString('en-IN')}</td>
+                                        <td class="text-danger small">${e.error || 'Unknown Error'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+
+            document.getElementById('syncReportBody').innerHTML = `
+                <div class="row g-3 text-center mb-3">
+                    <div class="col-md-4">
+                        <div class="card p-3 border-0 bg-light">
+                            <div class="text-muted small fw-bold">TOTAL PROCESSED</div>
+                            <div class="fs-3 fw-bold text-dark">${stats.total}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card p-3 border-0 bg-success-subtle">
+                            <div class="text-success small fw-bold">SYNCED SUCCESSFULLY</div>
+                            <div class="fs-3 fw-bold text-success">${stats.success}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card p-3 border-0 bg-danger-subtle">
+                            <div class="text-danger small fw-bold">FAILED</div>
+                            <div class="fs-3 fw-bold text-danger">${stats.failed}</div>
+                        </div>
+                    </div>
+                </div>
+                ${errorHtml}
+            `;
+            modal.show();
+        }
+
+        async function downloadSyncErrorsExcel() {
+            try {
+                const res = await fetch('/api/contra/export_sync_errors_excel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ errors: (lastSyncResult && lastSyncResult.errors) || [] })
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    alert(data.error || 'No contra sync errors found to download.');
+                    return;
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Contra_Sync_Error_Report_${new Date().toISOString().slice(0,10)}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('Download failed: ' + e.message);
+            }
+        }
+
+        // --------------------------------------------------
+        // Details Modal
+        // --------------------------------------------------
         function showDetails(idx) {
-            const c = allContras[idx];
+            const c = filteredContras[idx] || allContras[idx];
+            if (!c) return;
             const modal = new bootstrap.Modal(document.getElementById('contraModal'));
 
             const ledgerRows = (c.ledger_entries || []).map(e =>
                 `<tr>
                     <td>${e.ledger_name}</td>
                     <td class="text-end ${e.amount < 0 ? 'text-danger' : 'text-success'}">
-                        ${e.amount < 0 ? '(-)' : ''}&#8377;${Math.abs(e.amount || 0).toLocaleString()} ${e.amount < 0 ? 'Cr' : 'Dr'}
+                        ${e.amount < 0 ? '(-)' : ''}&#8377;${Math.abs(e.amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})} ${e.amount < 0 ? 'Cr' : 'Dr'}
                     </td>
                 </tr>`
             ).join('');
@@ -506,34 +1133,45 @@
             const costCenterRows = (c.cost_center_allocations || []).map(cc =>
                 `<tr>
                     <td>${cc.category || 'Unknown'}</td>
-                    <td class="text-end">&#8377;${(cc.amount || 0).toLocaleString()}</td>
+                    <td class="text-end">&#8377;${(cc.amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
                 </tr>`
             ).join('');
 
+            const isSynced = (c.zoho_status === 'synced' || Boolean(c.zoho_transfer_id));
+            const zohoInfo = `
+                <div class="alert ${isSynced ? 'alert-success' : (c.zoho_status === 'failed' ? 'alert-danger' : 'alert-warning')} py-2 mb-3">
+                    <strong>Zoho Sync Status:</strong> ${c.zoho_status || 'pending'}
+                    ${c.zoho_transfer_id ? `<br><small class="text-muted">Transfer ID: ${c.zoho_transfer_id}</small>` : ''}
+                    ${c.zoho_error ? `<br><small class="text-danger fw-semibold">Error: ${c.zoho_error}</small>` : ''}
+                </div>
+            `;
+
             document.getElementById('contraDetails').innerHTML = `
+                ${zohoInfo}
                 <div class="row g-3">
                     <div class="col-md-6">
                         <h6 class="text-secondary border-bottom pb-2">Voucher Info</h6>
                         <table class="table table-sm">
-                            <tr><th width="40%">Contra #:</th><td>${c.contra_number || '-'}</td></tr>
+                            <tr><th width="40%">Contra #:</th><td><strong>${c.contra_number || '-'}</strong></td></tr>
                             <tr><th>Date:</th><td>${formatDate(c.date)}</td></tr>
-                            <tr><th>Amount:</th><td class="fw-bold">&#8377;${(c.amount || 0).toLocaleString()}</td></tr>
+                            <tr><th>Amount:</th><td class="fw-bold text-success">&#8377;${(parseFloat(c.amount) || 0).toLocaleString('en-IN', {minimumFractionDigits:2})}</td></tr>
                         </table>
                     </div>
                     <div class="col-md-6">
-                        <h6 class="text-secondary border-bottom pb-2">Transacted Between</h6>
+                        <h6 class="text-secondary border-bottom pb-2">Accounts Breakdown</h6>
                         <table class="table table-sm">
-                            <tr><th width="40%" class="text-danger">From (Cr):</th><td>${c.from_account || '-'}</td></tr>
-                            <tr><th class="text-success">To (Dr):</th><td>${c.to_account || '-'}</td></tr>
+                            <tr><th width="40%" class="text-danger">From (Cr):</th><td class="text-danger fw-semibold">${c.from_account || '-'}</td></tr>
+                            <tr><th class="text-success">To (Dr):</th><td class="text-success fw-semibold">${c.to_account || '-'}</td></tr>
                         </table>
                     </div>
                 </div>
-                ${c.narration ? '<div class="mt-3"><h6 class="text-secondary border-bottom pb-2">Narration</h6><p class="small">' + c.narration + '</p></div>' : ''}
+                ${c.narration ? '<div class="mt-3"><h6 class="text-secondary border-bottom pb-2">Narration</h6><p class="small text-muted bg-light p-2 rounded">' + c.narration + '</p></div>' : ''}
                 ${costCenterRows ? '<div class="mt-3"><h6 class="text-secondary border-bottom pb-2">Cost Center Allocations</h6><table class="table table-sm table-bordered"><thead class="table-light"><tr><th>Category - Cost Center</th><th class="text-end">Amount</th></tr></thead><tbody>' + costCenterRows + '</tbody></table></div>' : ''}
                 ${ledgerRows ? '<div class="mt-3"><h6 class="text-secondary border-bottom pb-2">Ledger Breakdown</h6><table class="table table-sm table-bordered"><thead class="table-light"><tr><th>Ledger</th><th class="text-end">Amount</th></tr></thead><tbody>' + ledgerRows + '</tbody></table></div>' : ''}
             `;
             modal.show();
         }
+
     
       // ════════════════════════════════════════════════════════════════
       //  FIELD MAPPING  (contra module)
@@ -706,8 +1344,6 @@
       })();
 
     </script>
-
-    </div>
         </main>
     </div>
 </body>

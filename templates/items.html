@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -14,6 +14,7 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css"
       rel="stylesheet"
     />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link
       href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"
       rel="stylesheet"
@@ -32,13 +33,16 @@
         {% set page_title = 'Items' %}
         {% set page_subtitle = 'Import from Tally, sync to Zoho, and apply opening stock adjustments.' %}
         {% set topbar_actions = '
+          <button id="syncSelectedBtn" onclick="syncSelectedItems()" class="btn btn-primary btn-sm d-flex align-items-center me-1">
+            <i class="bi bi-check2-square me-2"></i> Sync Selected (<span id="selectedCount">0</span>)
+          </button>
           <button onclick="syncZoho()" class="btn btn-outline-primary btn-sm d-flex align-items-center">
-            <i class="bi bi-arrow-repeat me-2"></i> Sync to Zoho
+            <i class="bi bi-arrow-repeat me-2"></i> Sync All to Zoho
           </button>
           <button id="itemsSyncStopBtn" onclick="stopItemsSync()" class="btn btn-outline-danger btn-sm d-flex align-items-center" disabled>
             <i class="bi bi-stop-circle me-2"></i> Stop
           </button>
-          <button onclick="fetchData()" class="btn btn-primary btn-sm d-flex align-items-center">
+          <button onclick="fetchData()" class="btn btn-outline-secondary btn-sm d-flex align-items-center">
             <i class="bi bi-cloud-download me-2"></i> Import All Items
           </button>
         ' %}
@@ -209,6 +213,9 @@
               style="display:none" onclick="window.open('/api/field-mapping/items/export','_blank')">
               <i class="bi bi-cloud-upload"></i> Export for Zoho
             </button>
+            <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1" onclick="exportToExcel()" title="Export Items to Excel">
+              <i class="bi bi-file-earmark-excel" style="color:#217346;"></i> Export Excel
+            </button>
           </div>
         </div>
         <div id="fmStatusBar" class="px-3 py-1 small" style="display:none"></div>
@@ -217,6 +224,7 @@
           <table class="table table-hover align-middle mb-0">
             <thead class="sticky-top">
               <tr>
+                <th style="width: 40px;"><input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)" title="Select / Deselect All"></th>
                 <th>Item Name</th>
                 <th>Group</th>
                 <th>Category</th>
@@ -229,7 +237,7 @@
             </thead>
             <tbody id="tableBody">
               <tr>
-                <td colspan="8" class="text-center py-5 text-muted">
+                <td colspan="9" class="text-center py-5 text-muted">
                   <i class="bi bi-box-seam fs-1 mb-2"></i><br />
                   Click "Import All Items" to fetch data
                 </td>
@@ -284,6 +292,30 @@
       </div>
     </div>
 
+    <!-- ZOHO SYNC REPORT MODAL (Items) -->
+    <div class="modal fade" id="syncReportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title"><i class="bi bi-box-seam me-2"></i>Zoho Sync Report &mdash; Items</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4" id="syncReportBody"></div>
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <div class="d-flex gap-2">
+                        <button id="retryFailedBtn" type="button" class="btn btn-warning fw-bold" style="display:none" onclick="retryFailedItems()">
+                            <i class="bi bi-arrow-repeat me-1"></i>Retry Failed Items
+                        </button>
+                        <button type="button" class="btn btn-success fw-bold" onclick="downloadItemsSyncReportExcel()">
+                            <i class="bi bi-file-earmark-excel me-2"></i>Download Sync Report (.xlsx)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- OFF CANVAS FOR DETAILS -->
     <div
       class="offcanvas offcanvas-end"
@@ -313,6 +345,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
       let allItems = [];
+      let currentItemsRows = [];
       let stats = {};
       let invAdjPreviewReady = false;
 
@@ -407,7 +440,7 @@
 
           allItems = data.items;
           stats = data.stats;
-          // localStorage.setItem("itemsData", JSON.stringify(data)); // No longer needed as primary
+          // // localStorage.setItem("itemsData", JSON.stringify(data)); // No longer needed as primary
 
           updateKPIs(stats);
           renderTable(allItems);
@@ -463,71 +496,184 @@
         }
       }
 
+      let lastItemsSyncResult = null;
+
+      function downloadItemsSyncReportExcel() {
+        if (!lastItemsSyncResult) {
+          alert("No sync report data available.");
+          return;
+        }
+        const s = lastItemsSyncResult.stats || {};
+        const failed = lastItemsSyncResult.failed_items || [];
+
+        const reportRows = [];
+
+        if (failed.length > 0) {
+          failed.forEach(f => {
+            reportRows.push({
+              'Item Name': f.name || f.item_name || '',
+              'Sync Status': 'Failed',
+              'Error Details': f.error || f.reason || 'Unknown error'
+            });
+          });
+        } else {
+          reportRows.push({
+            'Item Name': 'All Processed Items',
+            'Sync Status': 'Success',
+            'Error Details': `Sync completed successfully! Created: ${s.created || 0}, Updated: ${s.updated || 0}, Skipped: ${s.skipped || 0}`
+          });
+        }
+
+        const ws = XLSX.utils.json_to_sheet(reportRows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Items_Sync_Report");
+        XLSX.writeFile(wb, "Items_Zoho_Sync_Report_" + new Date().toISOString().slice(0, 10) + ".xlsx");
+      }
+
+      async function retryFailedItems() {
+        if (!lastItemsSyncResult || !lastItemsSyncResult.failed_items || lastItemsSyncResult.failed_items.length === 0) {
+          alert("No failed items to retry.");
+          return;
+        }
+        const failedNames = lastItemsSyncResult.failed_items.map(f => f.name || f.item_name).filter(Boolean);
+        if (failedNames.length === 0) return;
+
+        const modalEl = document.getElementById('syncReportModal');
+        if (modalEl) {
+          const modal = bootstrap.Modal.getInstance(modalEl);
+          if (modal) modal.hide();
+        }
+
+        await _startItemsSyncJob(failedNames);
+      }
+
       function _renderItemsSyncResult(resultDiv, result) {
+        lastItemsSyncResult = result;
         const s = result.stats || {};
         const failed = result.failed_items || [];
         const isStopped = result.status === 'stopped';
         const alertClass = isStopped ? 'alert-warning' : (s.failed > 0 ? 'alert-warning' : 'alert-success');
 
         let html = `
-          <div class="alert ${alertClass} border-0 shadow-sm mt-2">
-            <div class="fw-bold mb-2">
-              <i class="bi ${isStopped ? 'bi-stop-circle-fill text-warning' : (s.failed > 0 ? 'bi-exclamation-triangle-fill text-warning' : 'bi-check-circle-fill text-success')} me-2"></i>
-              ${isStopped ? 'Items Sync Stopped' : 'Items Sync Complete'}
+          <div class="alert ${alertClass} border-0 shadow-sm mt-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+              <strong><i class="bi ${isStopped ? 'bi-stop-circle-fill text-warning' : (s.failed > 0 ? 'bi-exclamation-triangle-fill text-warning' : 'bi-check-circle-fill text-success')} me-2"></i>
+              ${isStopped ? 'Items Sync Stopped' : 'Items Sync Complete'}</strong>
+              <span class="ms-3 text-muted">Created: <strong class="text-success">${s.created || 0}</strong> | Updated: <strong class="text-primary">${s.updated || 0}</strong> | Skipped: <strong class="text-secondary">${s.skipped || 0}</strong> | Failed: <strong class="text-danger">${s.failed || 0}</strong></span>
             </div>
-            <div class="d-flex gap-4 flex-wrap">
-              <span><strong class="text-success">${s.created || 0}</strong> Created</span>
-              <span><strong class="text-primary">${s.updated || 0}</strong> Updated</span>
-              <span><strong class="text-secondary">${s.skipped || 0}</strong> Skipped</span>
-              <span><strong class="text-danger">${s.failed || 0}</strong> Failed</span>
-            </div>
+            <button class="btn btn-sm btn-outline-dark fw-bold" onclick="showItemsSyncReportModal()">
+              <i class="bi bi-file-earmark-bar-graph me-1"></i> View Sync Report Modal
+            </button>
           </div>`;
 
-        if (failed.length > 0) {
-          const rows = failed.map((f, i) => `
-            <tr>
-              <td class="text-center text-muted small">${i + 1}</td>
-              <td class="fw-medium text-danger">${f.name}</td>
-              <td>
-                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-                  ${f.reason}
-                </span>
-              </td>
-            </tr>`).join('');
+        resultDiv.innerHTML = html;
+        showItemsSyncReportModal();
+      }
 
-          html += `
-            <div class="card border-danger shadow-sm mt-2">
-              <div class="card-header bg-danger text-white fw-bold d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-x-circle-fill me-2"></i>Failed Items — ${failed.length} error(s)</span>
-                <span class="badge bg-white text-danger small">Review &amp; fix in Tally or Zoho</span>
-              </div>
-              <div class="card-body p-0">
-                <div class="table-responsive" style="max-height: 350px; overflow-y: auto;">
-                  <table class="table table-sm table-hover mb-0 align-middle">
-                    <thead class="table-light sticky-top">
-                      <tr>
-                        <th style="width:40px;">#</th>
-                        <th>Item Name</th>
-                        <th>Error Reason</th>
-                      </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                  </table>
-                </div>
-              </div>
-              <div class="card-footer bg-light text-muted small">
-                <i class="bi bi-lightbulb me-1"></i>Common fix: Check if this item already exists in Zoho with a different name, or if the HSN/rate is invalid.
-              </div>
-            </div>`;
+      function showItemsSyncReportModal() {
+        if (!lastItemsSyncResult) return;
+        const modalEl = document.getElementById('syncReportModal');
+        if (!modalEl) return;
+
+        const s = lastItemsSyncResult.stats || {};
+        const failed = lastItemsSyncResult.failed_items || [];
+        const createdCount = s.created || 0;
+        const updatedCount = s.updated || 0;
+        const skippedCount = s.skipped || 0;
+        const failedCount  = s.failed || 0;
+        const totalProcessed = createdCount + updatedCount + skippedCount + failedCount;
+
+        const retryBtn = document.getElementById('retryFailedBtn');
+        if (retryBtn) {
+          retryBtn.style.display = failedCount > 0 ? 'inline-block' : 'none';
         }
 
-        resultDiv.innerHTML = html;
+        const errRows = failed.map((f, i) =>
+          `<tr>
+            <td class="fw-bold">${i + 1}</td>
+            <td class="fw-medium text-dark">${f.name || f.item_name || '-'}</td>
+            <td class="text-danger small">${f.error || f.reason || 'Unknown error'}</td>
+          </tr>`
+        ).join('');
+
+        document.getElementById('syncReportBody').innerHTML = `
+          <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+              <div class="p-3 bg-light rounded text-center border">
+                <div class="text-muted small">Total Processed</div>
+                <div class="fs-4 fw-bold text-dark">${totalProcessed}</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="p-3 bg-success-subtle rounded text-center border border-success">
+                <div class="text-success small fw-bold"><i class="bi bi-plus-circle me-1"></i>Created</div>
+                <div class="fs-4 fw-bold text-success">${createdCount}</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="p-3 bg-primary-subtle rounded text-center border border-primary">
+                <div class="text-primary small fw-bold"><i class="bi bi-arrow-repeat me-1"></i>Updated</div>
+                <div class="fs-4 fw-bold text-primary">${updatedCount}</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="p-3 ${failedCount > 0 ? 'bg-danger-subtle border-danger' : 'bg-secondary-subtle border-secondary'} rounded text-center border">
+                <div class="${failedCount > 0 ? 'text-danger' : 'text-secondary'} small fw-bold"><i class="bi ${failedCount > 0 ? 'bi-exclamation-octagon' : 'bi-dash-circle'} me-1"></i>Failed</div>
+                <div class="fs-4 fw-bold ${failedCount > 0 ? 'text-danger' : 'text-secondary'}">${failedCount}</div>
+              </div>
+            </div>
+          </div>
+
+          ${failedCount > 0 ? `
+            <div class="mb-2">
+              <div class="d-flex justify-content-between align-items-center mb-2 border-bottom pb-2">
+                <h6 class="text-danger mb-0 fw-bold"><i class="bi bi-x-circle-fill me-2"></i>Failed Items &amp; Error Reasons (${failedCount})</h6>
+              </div>
+              <div class="table-responsive" style="max-height: 280px;">
+                <table class="table table-sm table-hover border align-middle mb-0">
+                  <thead class="table-light sticky-top">
+                    <tr>
+                      <th style="width:40px;">#</th>
+                      <th>Item Name</th>
+                      <th>Error Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>${errRows}</tbody>
+                </table>
+              </div>
+            </div>
+          ` : `
+            <div class="alert alert-success text-center my-3 border-0 rounded-3">
+              <i class="bi bi-check-circle-fill fs-2 d-block mb-2 text-success"></i>
+              <strong class="fs-5">Items sync completed successfully! No errors encountered.</strong>
+            </div>
+          `}
+        `;
+
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
       }
 
       async function syncZoho() {
         if (!confirm("This will sync ALL fetched items to Zoho Books. Continue?")) return;
+        await _startItemsSyncJob(null);
+      }
 
-        const btn = document.querySelector("button[onclick='syncZoho()']") || document.querySelector(".btn-outline-primary");
+      async function syncSelectedItems() {
+        const checked = document.querySelectorAll('.item-chk:checked');
+        if (checked.length === 0) {
+          alert('Please select at least one item first using the checkboxes.');
+          return;
+        }
+
+        const selectedNames = Array.from(checked).map(chk => chk.dataset.name);
+        if (!confirm(`Sync ${selectedNames.length} selected item(s) to Zoho Books?`)) return;
+
+        await _startItemsSyncJob(selectedNames);
+      }
+
+      async function _startItemsSyncJob(itemsPayload) {
+        const btn = document.getElementById('syncSelectedBtn') || document.querySelector("button[onclick='syncZoho()']");
         const originalText = btn ? btn.innerHTML : '';
         if (btn) {
           btn.disabled = true;
@@ -539,7 +685,6 @@
         clearItemsSyncConsole();
         _setItemsSyncConsoleStatus('Starting...');
 
-        // Show spinner in result area
         let resultDiv = document.getElementById('itemsSyncResult');
         if (!resultDiv) {
           resultDiv = document.createElement('div');
@@ -550,7 +695,7 @@
         resultDiv.innerHTML = `
           <div class="d-flex align-items-center gap-2 text-muted py-3">
             <span class="spinner-border spinner-border-sm"></span>
-            <span>Syncing Items to Zoho Books... This may take several minutes.</span>
+            <span>Syncing Items to Zoho Books... Please wait.</span>
           </div>`;
 
         try {
@@ -562,7 +707,7 @@
           const res = await fetch('/api/items/sync_zoho/start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ items: null }),
+            body: JSON.stringify({ items: itemsPayload }),
           });
           const startData = await res.json().catch(() => ({}));
           if (!res.ok || startData.status !== 'success' || !startData.job_id) {
@@ -838,26 +983,54 @@
             "₹" + (stats.total_value || 0).toLocaleString();
       }
 
+      function toggleSelectAll(masterChk) {
+        const chks = document.querySelectorAll('.item-chk');
+        chks.forEach(chk => chk.checked = masterChk.checked);
+        updateSelectedCount();
+      }
+
+      function updateSelectedCount() {
+        const checked = document.querySelectorAll('.item-chk:checked');
+        const countEl = document.getElementById('selectedCount');
+        if (countEl) countEl.innerText = checked.length;
+        
+        const masterChk = document.getElementById('selectAll');
+        const totalChks = document.querySelectorAll('.item-chk');
+        if (masterChk && totalChks.length > 0) {
+          masterChk.checked = (checked.length === totalChks.length);
+          masterChk.indeterminate = (checked.length > 0 && checked.length < totalChks.length);
+        }
+      }
+
       function renderTable(items) {
+        currentItemsRows = items;
         const tbody = document.getElementById("tableBody");
+        const masterChk = document.getElementById("selectAll");
+        if (masterChk) {
+          masterChk.checked = false;
+          masterChk.indeterminate = false;
+        }
+        updateSelectedCount();
+
         if (!items || items.length === 0) {
           tbody.innerHTML =
-            '<tr><td colspan="8" class="text-center py-4 text-muted">No Items Found</td></tr>';
+            '<tr><td colspan="9" class="text-center py-4 text-muted">No Items Found</td></tr>';
           return;
         }
 
         tbody.innerHTML = items
           .map(
             (i) => `
-                <tr onclick="showDetails('${i.name.replace(/'/g, "\\'")}')" style="cursor: pointer;">
-                    <td class="fw-medium text-primary">${i.name}</td>
+                <tr>
+                    <td onclick="event.stopPropagation()"><input type="checkbox" class="item-chk" data-name="${(i.name || '').replace(/"/g, '&quot;')}" onchange="updateSelectedCount()"></td>
+                    <td onclick="showDetails('${(i.name || '').replace(/'/g, "\\'")}')" style="cursor: pointer;" class="fw-medium text-primary">${i.name}</td>
                     <td><span class="badge bg-light text-dark border">${i.group_name || i.group || "-"}</span></td>
                     <td><small class="text-muted">${i.category || "-"}</small></td>
                     <td class="hsn-col">${i.hsn || "-"}</td>
                     <td class="tax-col">${i.gst_rate ? i.gst_rate + "%" : "-"}</td>
                     <td class="tax-col">${i.rate_of_duty ? i.rate_of_duty + "%" : "-"}</td>
                     <td>${i.qty ? i.qty + " " + (i.qty_unit || "") : "-"}</td>
-                <td class="text-end fw-bold">${i.value ? "₹" + parseFloat(i.value).toLocaleString() : "-"}</td>
+                    <td class="text-end fw-bold">${i.value ? "₹" + parseFloat(i.value).toLocaleString() : "-"}</td>
                 </tr>
             `,
           )
@@ -943,6 +1116,41 @@
         );
         renderTable(filtered);
       }
+
+      async function exportToExcel() {
+        const dataToExport = (currentItemsRows && currentItemsRows.length > 0) ? currentItemsRows : allItems;
+        if (!dataToExport || dataToExport.length === 0) {
+          alert("No items available to export. Please fetch or load data first.");
+          return;
+        }
+
+        try {
+          const res = await fetch('/api/items/export_zoho_excel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: dataToExport })
+          });
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.error || "Failed to generate Excel file");
+          }
+
+          const blob = await res.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `Zoho_Books_Formatted_Items_${new Date().toISOString().slice(0, 10)}.xlsx`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+        } catch (err) {
+          console.error("Export error:", err);
+          alert("Export failed: " + err.message);
+        }
+      }
+
 
       // ════════════════════════════════════════════════════════════════
       //  FIELD MAPPING  (Items module)

@@ -50,6 +50,7 @@
           body: JSON.stringify({ db_name: dbName })
         });
         if (res.ok) {
+          localStorage.clear();
           location.reload();
           return;
         }

@@ -19,15 +19,9 @@ except ImportError:
     print("️ Warning: Could not import database_manager. SQLite sync will be skipped.")
     database_manager = None
 
-# Load environment variables
-load_dotenv()
+from journel.journel_backend import _get_creds
 
 TALLY_URL = "http://localhost:9000"
-BASE_URL = "https://www.zohoapis.com/books/v3"
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
-ORGANIZATION_ID = os.getenv("ORGANIZATION_ID")
 
 # Cache for vendor payment terms to avoid repeated queries
 vendor_payment_terms_cache = {}
@@ -400,26 +394,176 @@ def fetch_tally_purchase_orders(purchase_order_number="1"):
         traceback.print_exc()
         return []
 
-def get_access_token():
-    """Get Zoho OAuth access token"""
-    url = "https://accounts.zoho.com/oauth/v2/token"
-    params = {
-        "refresh_token": REFRESH_TOKEN,
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "refresh_token"
-    }
+def create_zoho_purchase_order(token, so_data, contact_map, account_map, payment_terms_map, tax_map, tag_map, item_map):
+    """Create a Purchase Order in Zoho Books"""
+    creds = _get_creds()
+    headers = {"Authorization": f"Zoho-oauthtoken {token}"}
+    params = {"organization_id": creds["org_id"]}
     
+    # Convert Tally date format (YYYYMMDD) to Zoho format (YYYY-MM-DD)
+    tally_date = so_data["date"]
+    if len(tally_date) == 8:
+        zoho_date = f"{tally_date[0:4]}-{tally_date[4:6]}-{tally_date[6:8]}"
+    else:
+        zoho_date = tally_date
+    
+    print(f"\n{'='*100}")
+    print(f"[Purchase Order] Processing Purchase Order #{so_data['purchase_order_number']} - Date: {tally_date}")
+    print(f"{'='*100}")
+    
+    # Find vendor in Zoho Books
+    vendor_info, match_score = find_vendor_in_zoho(so_data["vendor_name"], contact_map)
+    
+    if not vendor_info:
+        error_msg = f"Vendor '{so_data['vendor_name']}' not found in Zoho Books"
+        print(f"  [ERROR] {error_msg}")
+        print(f"  [ACTION REQUIRED] Please create this vendor in Zoho Books manually and run again.")
+        print(f"  [SKIPPING] Skipping this Purchase Order...")
+        return {"success": False, "error": error_msg}
+    
+    if match_score == 100:
+        print(f"  [EXACT MATCH] Found vendor: {vendor_info['contact_name']}")
+    else:
+        if match_score < 80:
+            error_msg = f"Low confidence match for vendor '{so_data['vendor_name']}' (Score: {match_score}%)"
+            print(f"  [WARNING] {error_msg}")
+            print(f"  [MATCH] Best match: '{vendor_info['contact_name']}' (Score: {match_score}%)")
+            print(f"  [ACTION] Please verify this is correct before proceeding")
+            return {"success": False, "error": error_msg}
+        else:
+            print(f"  [FUZZY MATCH] Matched '{so_data['vendor_name']}' → '{vendor_info['contact_name']}' (Score: {match_score}%)")
+    
+    print(f"  [vendor] {vendor_info['contact_name']} (ID: {vendor_info['contact_id']})")
+    
+    # Display additional info
+    if so_data.get('reference_number'):
+        print(f"  [REF] {so_data['reference_number']}")
+    if so_data.get('payment_terms'):
+        print(f"  [TERMS] {so_data['payment_terms']}")
+    if so_data.get('order_status'):
+        print(f"  [STATUS] {so_data['order_status']}")
+    
+    # Build line items
+    zoho_line_items = []
+    
+    # Calculate total tax rate
+    total_tax_rate = calculate_total_tax_rate(so_data["taxes"])
+    
+    # Detect tax type: Check if Tally has CGST+SGST (intrastate) or IGST (interstate)
+    has_cgst = any('cgst' in tax.get('tax_type', '').lower() for tax in so_data["taxes"])
+    has_sgst = any('sgst' in tax.get('tax_type', '').lower() for tax in so_data["taxes"])
+    has_igst = any('igst' in tax.get('tax_type', '').lower() for tax in so_data["taxes"])
+    
+    is_intrastate = has_cgst and has_sgst
+    is_interstate = has_igst
+    
+    # Get tax ID from Zoho based on total rate AND tax type
+    tax_info = None
+    
+    # First, try to find exact match by rate
+    if total_tax_rate > 0:
+        # Search for appropriate tax based on transaction type
+        for key, val in tax_map.items():
+            if isinstance(key, float) and key == total_tax_rate:
+                tax_name_lower = val.get('tax_name', '').lower()
+                
+                # For intrastate (CGST+SGST), avoid IGST
+                if is_intrastate and 'igst' not in tax_name_lower:
+                    tax_info = val
+                    print(f"  [TAX MATCH] Intrastate transaction - Using {val['tax_name']} ({total_tax_rate}%)")
+                    break
+                # For interstate (IGST), prefer IGST
+                elif is_interstate and 'igst' in tax_name_lower:
+                    tax_info = val
+                    print(f"  [TAX MATCH] Interstate transaction - Using {val['tax_name']} ({total_tax_rate}%)")
+                    break
+    
+    # If exact tax not found OR tax rate is 0%, use default 18% GST (not IGST - for intrastate)
+    if not tax_info:
+        if total_tax_rate > 0:
+            print(f"  [WARNING] No matching tax found for {total_tax_rate}% ({'Intrastate' if is_intrastate else 'Interstate'})")
+            print(f"  [WARNING] Available taxes: {', '.join([str(k) for k in tax_map.keys() if isinstance(k, float)])}")
+        else:
+            print(f"  [INFO] Tax rate is 0% - using default 18% GST")
+        
+        # Try to use GST18 (not IGST18) as default for intrastate transactions
+        # First check the _gst_taxes map which contains only GST (CGST+SGST) taxes
+        default_tax = tax_map.get("_gst_taxes", {}).get(18.0) or tax_map.get("gst18")
+        if not default_tax:
+            # If GST18 not found, try to find any 18% tax that's not IGST
+            for key, val in tax_map.items():
+                if isinstance(key, str) and "18" in key and "igst" not in key.lower():
+                    default_tax = val
+                    break
+        
+        if default_tax:
+            print(f"  [DEFAULT] Using default tax: {default_tax['tax_name']} (18%) instead of {total_tax_rate}%")
+            tax_info = default_tax
+        else:
+            print(f"  [ERROR] No default 18% GST tax found!")
+    
+    for item in so_data["line_items"]:
+        print(f"  [ITEM] {item['item_name']} - Qty: {item['quantity']} @ Rs.{item['rate']}")
+        
+        # Find purchase account
+        purchase_account_id = None
+        if so_data.get('purchase_ledger'):
+            purchase_account = account_map.get(so_data['purchase_ledger'].lower())
+            if purchase_account:
+                purchase_account_id = purchase_account['account_id']
+        
+        # Parse quantity
+        qty_str = item['quantity'].split()[0] if item['quantity'] else "1"
+        try:
+            qty = float(qty_str)
+        except:
+            qty = 1.0
+        
+        # Parse discount
+        try:
+            discount = float(item['discount']) if item['discount'] and item['discount'] != '0' else 0
+        except:
+            discount = 0
+        
+        line_item = {
+            "name": item['item_name'],
+            "description": item['item_name'],
+            "rate": item['rate'],
+            "quantity": qty,
+            "discount": discount,
+        }
+
+    # Construct Payload
+    payload = {
+        "vendor_id": vendor_info["contact_id"],
+        "date": zoho_date,
+        "line_items": zoho_line_items,
+        "notes": so_data.get("narration", "")
+    }
+
     try:
-        response = requests.post(url, params=params)
-        if response.status_code == 200:
-            return response.json().get("access_token")
+        res = requests.post(f"{creds['base_url']}/purchaseorders", headers=headers, params=params, json=payload)
+        
+        if res.status_code in [200, 201] and res.json().get("code") == 0:
+            so_id = res.json().get("purchaseorder", {}).get("purchaseorder_id", "N/A")
+            print(f"   SUCCESS! Purchase Order created with ID: {so_id}")
+            
+            # Optionally mark as open
+            try:
+                open_res = requests.post(
+                    f"{creds['base_url']}/purchaseorders/{so_id}/status/open",
+                    headers=headers,
+                    params={"organization_id": creds["org_id"]}
+                )
+            except: pass
+        else:
+            print(f"   [ERROR] Failed to create PO: {res.text}")
     except Exception as e:
-        print(f"Error getting access token: {e}")
-    return None
+        print(f"   [ERROR] Exception creating PO: {e}")
 
 def get_zoho_contacts(token):
     """Fetch all vendor contacts from Zoho Books with pagination"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
     
     all_vendors = {}
@@ -429,12 +573,12 @@ def get_zoho_contacts(token):
     try:
         while True:
             params = {
-                "organization_id": ORGANIZATION_ID,
+                "organization_id": creds["org_id"],
                 "page": page,
                 "per_page": per_page
             }
             
-            res = requests.get(f"{BASE_URL}/contacts", headers=headers, params=params)
+            res = requests.get(f"{creds['base_url']}/contacts", headers=headers, params=params)
             if res.status_code == 200 and res.json().get("code") == 0:
                 contacts = res.json().get("contacts", [])
                 
@@ -464,11 +608,12 @@ def get_zoho_contacts(token):
 
 def get_zoho_accounts(token):
     """Fetch all accounts (chart of accounts) from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/chartofaccounts", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/chartofaccounts", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             all_accounts = res.json().get("chartofaccounts", [])
             account_map = {acc["account_name"].lower(): acc for acc in all_accounts}
@@ -479,11 +624,12 @@ def get_zoho_accounts(token):
 
 def get_zoho_payment_terms_list(token):
     """Fetch all payment terms from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/settings/paymentterms", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/paymentterms", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             terms_data = res.json().get("data", {})
             terms_list = terms_data.get("payment_terms", [])
@@ -502,11 +648,12 @@ def get_zoho_payment_terms_list(token):
 
 def get_zoho_taxes(token):
     """Fetch tax rates from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/settings/taxes", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/taxes", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             all_taxes = res.json().get("taxes", [])
             
@@ -536,13 +683,14 @@ def get_zoho_taxes(token):
 
 def get_zoho_tags(token):
     """Fetch all tags from Zoho Books using reporting_tags API"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     tag_map = {}
     try:
         # Get list of all tag categories
-        res = requests.get(f"{BASE_URL}/settings/tags", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/tags", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             # Use 'reporting_tags' key instead of 'tags'
             categories = res.json().get("reporting_tags", [])
@@ -553,7 +701,7 @@ def get_zoho_tags(token):
                 tag_name = category.get("tag_name")
                 
                 # Get detailed options for this tag
-                detail_res = requests.get(f"{BASE_URL}/settings/tags/{tag_id}", headers=headers, params=params)
+                detail_res = requests.get(f"{creds['base_url']}/settings/tags/{tag_id}", headers=headers, params=params)
                 if detail_res.status_code == 200:
                     detail_data = detail_res.json()
                     tag_obj = detail_data.get("tag", detail_data.get("reporting_tag", {}))
@@ -577,6 +725,7 @@ def get_zoho_tags(token):
 
 def get_zoho_items(token):
     """Fetch all items from Zoho Books with their reporting tags"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
     
     all_items = {}
@@ -586,12 +735,12 @@ def get_zoho_items(token):
     try:
         while True:
             params = {
-                "organization_id": ORGANIZATION_ID,
+                "organization_id": creds["org_id"],
                 "page": page,
                 "per_page": per_page
             }
             
-            res = requests.get(f"{BASE_URL}/items", headers=headers, params=params)
+            res = requests.get(f"{creds['base_url']}/items", headers=headers, params=params)
             if res.status_code == 200 and res.json().get("code") == 0:
                 items = res.json().get("items", [])
                 
@@ -1455,7 +1604,19 @@ def parse_tally_json(json_path):
         if 'vouchernumber' not in v and 'vouchertypename' not in v: continue
         
         v_date = str(v.get('date', '')).strip()
-        v_no = str(v.get('vouchernumber', '')).strip()
+        tally_guid = str(v.get('guid', '')).strip()
+        v_no = str(v.get('vouchernumber') or v.get('voucherkey') or v.get('reference') or tally_guid or '').strip()
+        if not v_no:
+            import hashlib
+            v_no = "AUTO-" + hashlib.md5(str(v).encode('utf-8')).hexdigest()[:8]
+        if 'seen_v_no' not in locals(): seen_v_no = set()
+        original_no = v_no
+        counter = 1
+        while v_no in seen_v_no:
+            suffix = tally_guid[-4:] if tally_guid and counter == 1 else str(counter)
+            v_no = f"{original_no}_{suffix}"
+            counter += 1
+        seen_v_no.add(v_no)
         vendor_name = str(v.get('partyname', '')).strip()
         narration = str(v.get('narration', '')).strip()
         reference_number = str(v.get('reference', '')).strip()

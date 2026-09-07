@@ -1,4 +1,4 @@
-﻿{# Shared top bar: set `page_title`, `page_subtitle`, optional `topbar_actions` (HTML) #}
+{# Shared top bar: set `page_title`, `page_subtitle`, optional `topbar_actions` (HTML) #}
 {# Set `show_org_switcher = true` in the page to show the company DB switcher #}
 <div class="topbar">
   <div>
@@ -8,7 +8,7 @@
     {% endif %}
   </div>
   <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end" style="min-width: 260px;">
-    {% if show_org_switcher %}
+    {% if not hide_org_switcher %}
       {% include '_org_switcher.html' %}
     {% endif %}
     {% if topbar_actions %}

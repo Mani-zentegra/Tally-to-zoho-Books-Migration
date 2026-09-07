@@ -194,14 +194,26 @@ def parse_tally_json(json_path):
 
     for v in vouchers:
         if not isinstance(v, dict): continue
-        if 'vouchernumber' not in v and 'vouchertypename' not in v: continue
+        if 'vouchernumber' not in v and 'vouchertypename' not in v and 'voucherkey' not in v: continue
 
         debit_note_date = str(v.get('date', '')).strip()
-        debit_note_number = str(v.get('vouchernumber', '')).strip()
+        tally_guid = str(v.get('guid', '')).strip()
+        debit_note_number = str(v.get('vouchernumber') or v.get('voucherkey') or v.get('reference') or tally_guid or '').strip()
+        if not debit_note_number:
+            import hashlib
+            debit_note_number = "AUTO-" + hashlib.md5(str(v).encode('utf-8')).hexdigest()[:8]
+        if 'seen_debit_note_number' not in locals(): seen_debit_note_number = set()
+        original_no = debit_note_number
+        counter = 1
+        while debit_note_number in seen_debit_note_number:
+            suffix = tally_guid[-4:] if tally_guid and counter == 1 else str(counter)
+            debit_note_number = f"{original_no}_{suffix}"
+            counter += 1
+        seen_debit_note_number.add(debit_note_number)
         voucher_type = str(v.get('vouchertypename', 'Debit Note')).strip()
         
         # Only process Debit Note types just in case JSON includes multiple types
-        if voucher_type.lower() != 'debit_note':
+        if voucher_type.lower().replace(' ', '_') != 'debit_note':
             continue
             
         tally_guid = str(v.get('guid', '')).strip()
@@ -224,7 +236,7 @@ def parse_tally_json(json_path):
 
             ledger_entries.append({"ledger_name": ename, "amount": eamt})
 
-            is_deemed_positive = entry.get('isdeemedpositive', False) or entry.get('isdeemedpositive', '').lower() == 'yes'
+            is_deemed_positive = str(entry.get('isdeemedpositive', '')).strip().lower() in ['yes', 'true', '1']
             
             if is_deemed_positive:
                 if not to_account_name: to_account_name = ename

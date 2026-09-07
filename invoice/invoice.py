@@ -7,15 +7,9 @@ import json
 import re
 from fuzzywuzzy import fuzz
 
-# Load environment variables
-load_dotenv()
+from journel.journel_backend import _get_creds
 
 TALLY_URL = "http://localhost:9000"
-BASE_URL = "https://www.zohoapis.com/books/v3"
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
-ORGANIZATION_ID = os.getenv("ORGANIZATION_ID")
 
 # Cache for customer payment terms to avoid repeated queries
 customer_payment_terms_cache = {}
@@ -224,19 +218,19 @@ def fetch_tally_invoices(limit=1):  # Changed to 1 for testing
                 if item_ledger and item_ledger.text:
                     sales_ledger_from_item = item_ledger.text.strip()
                     break
-            
-            # Method 2: If not found in items, find the ledger with LARGEST NEGATIVE amount
+                     # Method 2: If not found in items, find the ledger with LARGEST NEGATIVE amount
+            # (excluding customer, taxes, tds, and rounding)
             if not sales_ledger_from_item:
                 max_negative_amount = 0
                 for entry in v.find_all('LEDGERENTRIES.LIST') or v.find_all('ALLLEDGERENTRIES.LIST'):
                     name = entry.find('LEDGERNAME').text.strip() if entry.find('LEDGERNAME') else ""
                     amt = float(entry.find('AMOUNT').text or 0) if entry.find('AMOUNT') else 0
                     
-                    # Skip customer ledger, tax ledgers, and rounding off
+                    # Skip customer ledger, tax ledgers, TDS, and rounding off
                     name_lower = name.lower()
                     if name == customer_name:  # Skip customer
                         continue
-                    if 'cgst' in name_lower or 'sgst' in name_lower or 'igst' in name_lower:  # Skip taxes
+                    if 'cgst' in name_lower or 'sgst' in name_lower or 'igst' in name_lower or 'cst' in name_lower or 'vat' in name_lower or 'tds' in name_lower or 't.d.s' in name_lower:  # Skip taxes/TDS
                         continue
                     if 'rounding' in name_lower:  # Skip rounding
                         continue
@@ -250,6 +244,7 @@ def fetch_tally_invoices(limit=1):  # Changed to 1 for testing
             
             # Get line items
             line_items = []
+            subtotal = 0
             for item in v.find_all('INVENTORYENTRIES.LIST') or v.find_all('ALLINVENTORYENTRIES.LIST'):
                 item_name = item.find('STOCKITEMNAME').text.strip() if item.find('STOCKITEMNAME') else ""
                 
@@ -261,14 +256,8 @@ def fetch_tally_invoices(limit=1):  # Changed to 1 for testing
                 rate_tag = item.find('RATE')
                 if rate_tag and rate_tag.text:
                     rate_text = rate_tag.text.split('/')[0].strip()
-                    # Extract only numeric part (handle currency symbols and conversion strings)
-                    # Example: "$20.30 = ? 1729.56" -> extract "1729.56"
                     numbers = re.findall(r'[-\d.]+', rate_text)
-                    if numbers:
-                        # Use the last number (usually the converted amount)
-                        rate = float(numbers[-1])
-                    else:
-                        rate = 0.0
+                    rate = float(numbers[-1]) if numbers else 0.0
                 else:
                     rate = 0.0
                 
@@ -280,14 +269,8 @@ def fetch_tally_invoices(limit=1):  # Changed to 1 for testing
                 amount_tag = item.find('AMOUNT')
                 if amount_tag and amount_tag.text:
                     amount_text = amount_tag.text.strip()
-                    # Extract only numeric part (handle currency symbols and conversion strings)
-                    # Example: "$7876.40 @ ? 85.20/$ = ? 671069.28" -> extract "671069.28"
                     numbers = re.findall(r'[-\d.]+', amount_text)
-                    if numbers:
-                        # Use the last number (usually the converted amount)
-                        amount = float(numbers[-1])
-                    else:
-                        amount = 0.0
+                    amount = float(numbers[-1]) if numbers else 0.0
                 else:
                     amount = 0.0
                 
@@ -310,59 +293,71 @@ def fetch_tally_invoices(limit=1):  # Changed to 1 for testing
                     "category": category,
                     "cost_centre": cost_centre
                 })
+                subtotal += abs(amount)
             
-            # Get tax details from LEDGERENTRIES.LIST (ALL TAX TYPES)
+            # Get tax details and additional charges (Freight, Transport, etc.) from LEDGERENTRIES.LIST
             taxes = []
+            tax_total = 0.0
+            rounding_off = 0.0
+            freight_charges = 0.0
+            tds_amount = 0.0
+            tds_ledger = ""
+            tds_rate = 0.0
+
             for entry in v.find_all('LEDGERENTRIES.LIST') or v.find_all('ALLLEDGERENTRIES.LIST'):
                 name = entry.find('LEDGERNAME').text.strip() if entry.find('LEDGERNAME') else ""
+                if not name: continue
+                name_lower = name.lower()
+
                 # Get amount - handle currency conversion strings
                 amount_tag = entry.find('AMOUNT')
                 if amount_tag and amount_tag.text:
                     amount_text = amount_tag.text.strip()
                     numbers = re.findall(r'[-\d.]+', amount_text)
-                    if numbers:
-                        amt = float(numbers[-1])
-                    else:
-                        amt = 0.0
+                    amt = float(numbers[-1]) if numbers else 0.0
                 else:
                     amt = 0.0
                 
+                # Check for TDS ledgers
+                if ('tds' in name_lower or 't.d.s' in name_lower or 'tax deducted' in name_lower) and name_lower != customer_name.lower() and name_lower != sales_ledger.lower():
+                    tds_ledger = name
+                    tds_amount = abs(amt)
+                    if subtotal > 0:
+                        tds_rate = round((tds_amount / subtotal) * 100, 2)
                 # Check for ANY tax ledger (CGST, SGST, IGST, etc.)
-                name_lower = name.lower()
-                if ('cgst' in name_lower or 'sgst' in name_lower or 'igst' in name_lower) and 'output' in name_lower:
-                    # Extract rate from ledger name (e.g., "CGST Output 6%" or "IGST Output 12%")
+                elif any(t_kw in name_lower for t_kw in ['gst', 'cgst', 'sgst', 'igst', 'cst', 'vat', 'tax']) and name_lower != customer_name.lower() and name_lower != sales_ledger.lower():
                     rate = ""
                     if '%' in name:
                         rate = name.split('%')[0].split()[-1]
                     
-                    tax_type = "CGST" if 'cgst' in name_lower else ("SGST" if 'sgst' in name_lower else "IGST")
+                    tax_type = "CGST" if 'cgst' in name_lower else ("SGST" if 'sgst' in name_lower else ("IGST" if 'igst' in name_lower else ("CST" if 'cst' in name_lower else ("VAT" if 'vat' in name_lower else "GST"))))
                     taxes.append({
                         "tax_name": name,
                         "tax_type": tax_type,
                         "tax_rate": rate,
                         "tax_amount": abs(amt)
                     })
-            
-            # Get rounding off
-            rounding_off = 0.0
-            for entry in v.find_all('LEDGERENTRIES.LIST') or v.find_all('ALLLEDGERENTRIES.LIST'):
-                name = entry.find('LEDGERNAME').text.strip() if entry.find('LEDGERNAME') else ""
-                # Get amount - handle currency conversion strings
-                amount_tag = entry.find('AMOUNT')
-                if amount_tag and amount_tag.text:
-                    amount_text = amount_tag.text.strip()
-                    numbers = re.findall(r'[-\d.]+', amount_text)
-                    if numbers:
-                        amt = float(numbers[-1])
-                    else:
-                        amt = 0.0
-                else:
-                    amt = 0.0
-                
-                if 'rounding' in name.lower():
+                    tax_total += abs(amt)
+                elif 'rounding' in name_lower:
                     rounding_off = amt
-                    break
+                elif name_lower != customer_name.lower() and name_lower != sales_ledger.lower() and abs(amt) > 0:
+                    # Additional Ledger Charge (e.g. Freight Charges, Transport, Packing)
+                    charge_amt = abs(amt)
+                    freight_charges += charge_amt
+                    line_items.append({
+                        "item_name": name,
+                        "quantity": "1.0",
+                        "rate": charge_amt,
+                        "discount": "0",
+                        "amount": charge_amt,
+                        "category": "",
+                        "cost_centre": "",
+                        "is_additional_charge": True
+                    })
+                    subtotal += charge_amt
             
+            total_amount = subtotal + tax_total + rounding_off - tds_amount
+
             invoice_data.append({
                 "date": v_date,
                 "invoice_number": v_no,
@@ -377,9 +372,14 @@ def fetch_tally_invoices(limit=1):  # Changed to 1 for testing
                 "line_items": line_items,
                 "taxes": taxes,
                 "rounding_off": rounding_off,
+                "tds_amount": round(tds_amount, 2),
+                "tds_ledger": tds_ledger,
+                "tds_rate": round(tds_rate, 2),
+                "subtotal": round(subtotal, 2),
+                "tax_total": round(tax_total, 2),
+                "total_amount": round(total_amount, 2),
                 "narration": narration if narration else ""
             })
-        
         return invoice_data
     except Exception as e:
         print(f"Error fetching invoices from Tally: {e}")
@@ -390,10 +390,11 @@ def fetch_tally_invoices(limit=1):  # Changed to 1 for testing
 def get_zoho_contacts(token):
     """Fetch all CUSTOMER contacts from Zoho Books"""
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    creds = _get_creds()
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/contacts", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/contacts", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             all_contacts = res.json().get("contacts", [])
             # Filter to only customers
@@ -402,11 +403,6 @@ def get_zoho_contacts(token):
     except Exception as e:
         print(f"Error fetching contacts: {e}")
     return {}
-
-# Removed - No longer auto-creating customers
-# def create_contact_in_zoho(token, contact_name):
-#     """Create a new customer contact in Zoho Books"""
-#     ...
 
 def find_or_create_contact(token, contact_map, contact_name):
     """Find existing contact using FUZZY MATCHING - NO AUTO-CREATE"""
@@ -448,11 +444,12 @@ def find_or_create_contact(token, contact_map, contact_name):
 
 def get_zoho_accounts(token):
     """Fetch all accounts from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/chartofaccounts", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/chartofaccounts", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             return {a["account_name"].lower(): a["account_id"] for a in res.json().get("chartofaccounts", [])}
     except Exception as e:
@@ -461,13 +458,14 @@ def get_zoho_accounts(token):
 
 def get_zoho_tags(token):
     """Fetch all tags from Zoho Books using reporting_tags API"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     tag_map = {}
     try:
         # Get list of all tag categories
-        res = requests.get(f"{BASE_URL}/settings/tags", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/tags", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             # Use 'reporting_tags' key instead of 'tags'
             categories = res.json().get("reporting_tags", [])
@@ -478,7 +476,7 @@ def get_zoho_tags(token):
                 tag_name = category.get("tag_name")
                 
                 # Get detailed options for this tag
-                detail_res = requests.get(f"{BASE_URL}/settings/tags/{tag_id}", headers=headers, params=params)
+                detail_res = requests.get(f"{creds['base_url']}/settings/tags/{tag_id}", headers=headers, params=params)
                 if detail_res.status_code == 200:
                     detail_data = detail_res.json()
                     tag_obj = detail_data.get("tag", detail_data.get("reporting_tag", {}))
@@ -502,11 +500,12 @@ def get_zoho_tags(token):
 
 def get_zoho_payment_terms_list(token):
     """Fetch all payment terms from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/settings/paymentterms", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/paymentterms", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             terms_data = res.json().get("data", {})
             terms_list = terms_data.get("payment_terms", [])
@@ -559,8 +558,9 @@ def map_payment_terms(tally_terms, zoho_terms_map):
 
 def get_zoho_taxes(token):
     """Fetch all taxes AND tax groups from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
 
     tax_map = {}
@@ -569,7 +569,7 @@ def get_zoho_taxes(token):
     
     # Fetch individual taxes
     try:
-        res = requests.get(f"{BASE_URL}/settings/taxes", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/taxes", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             taxes = res.json().get("taxes", [])
             for tax in taxes:
@@ -598,7 +598,7 @@ def get_zoho_taxes(token):
     
     # Fetch tax groups (compound taxes like GST12 [12%])
     try:
-        res = requests.get(f"{BASE_URL}/settings/taxgroups", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/taxgroups", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             tax_groups = res.json().get("tax_groups", [])
             for group in tax_groups:
@@ -640,9 +640,10 @@ def calculate_total_tax_rate(taxes):
 
 def create_zoho_invoice(token, invoice_data, contact_map, account_map, payment_terms_map, tax_map, tag_map):
     """Create invoice in Zoho Books with FULL AUTOMATION"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
     params = {
-        "organization_id": ORGANIZATION_ID,
+        "organization_id": creds["org_id"],
         "ignore_auto_number_generation": "true"  # Use Tally invoice number
     }
     
@@ -726,9 +727,9 @@ def create_zoho_invoice(token, invoice_data, contact_map, account_map, payment_t
             "discount": discount,
         }
         
-        # Add tax ID if available - DISABLED (client will configure taxes tomorrow)
-        # if tax_info:
-        #     line_item["tax_id"] = tax_info["tax_id"]
+        # Add tax ID if available
+        if tax_info:
+            line_item["tax_id"] = tax_info["tax_id"]
         
         # Add account if found
         if sales_account_id:
@@ -833,7 +834,7 @@ def create_zoho_invoice(token, invoice_data, contact_map, account_map, payment_t
     print(f"  Payload: {json.dumps(payload, indent=2)}")
     
     try:
-        res = requests.post(f"{BASE_URL}/invoices", headers=headers, params=params, json=payload)
+        res = requests.post(f"{creds['base_url']}/invoices", headers=headers, params=params, json=payload)
         
         # Log full response for debugging
         with open("invoice_response.log", "w") as f:
@@ -843,6 +844,13 @@ def create_zoho_invoice(token, invoice_data, contact_map, account_map, payment_t
         if res.status_code in [200, 201] and res.json().get("code") == 0:
             invoice_id = res.json().get("invoice", {}).get("invoice_id", "N/A")
             print(f"  [SUCCESS] Invoice created with ID: {invoice_id}")
+            
+            if invoice_id and invoice_id != "N/A":
+                try:
+                    requests.post(f"{creds['base_url']}/invoices/{invoice_id}/status/sent", headers=headers, params=params)
+                    print(f"  [STATUS] Marked Invoice #{invoice_data['invoice_number']} as SENT / OVERDUE")
+                except Exception as st_err:
+                    print(f"  [STATUS ERROR] {st_err}")
             return True
         else:
             print(f"  [FAILED] Status: {res.status_code}")

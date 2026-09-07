@@ -425,9 +425,13 @@ def get_groups_mapping():
     """Retrieve the saved group mapping."""
     return mapping_manager.load_mapping()
 
-def sync_groups_to_zoho(mapping=None):
+def sync_groups_to_zoho(mapping=None, log=None, selected_ledgers=None):
+    def _log(msg):
+        print(msg)
+        if log:
+            log(msg)
     if mapping is None:
-        print(" Loading saved mapping...")
+        _log(" Loading saved mapping...")
         mapping = mapping_manager.load_mapping()
 
     if not mapping:
@@ -441,7 +445,7 @@ def sync_groups_to_zoho(mapping=None):
         except:
             return {"status": "error", "message": "Zoho Connector missing"}
 
-    print(f" Starting Zoho Sync (Groups & Ledgers)... Mapping size: {len(mapping)}")
+    _log(f" Starting Zoho Sync (Groups & Ledgers)... Mapping size: {len(mapping)}")
     stats = {"created": 0, "updated": 0, "failed": 0, "skipped": 0, "children_created": 0, "ledgers_created": 0}
 
     # ─────────────────────────────────────────────────────────
@@ -458,15 +462,22 @@ def sync_groups_to_zoho(mapping=None):
     excluded_group_names = set(g.lower() for g in EXCLUDED_GROUPS)
     failed_ledgers = []   # Ledgers that failed due to type mismatch
     duplicates = []       # Duplicate account names found in Zoho
+    sync_log = []         # Detailed log of every action taken
 
     # 1. Fetch Source Data (From DB as requested)
-    print(" Fetching Groups & Ledgers from Local Database...")
+    _log(" Fetching Groups & Ledgers from Local Database...")
     if database_manager:
         tally_groups = database_manager.get_all_groups()
-        tally_ledgers = database_manager.get_all_ledgers()
-        print(f" Loaded {len(tally_groups)} Groups and {len(tally_ledgers)} Ledgers from DB.")
+        all_db_ledgers = database_manager.get_all_ledgers()
+        if selected_ledgers and len(selected_ledgers) > 0:
+            sel_names = set(str(x).strip().lower() for x in selected_ledgers)
+            tally_ledgers = [l for l in all_db_ledgers if l.get("name", "").strip().lower() in sel_names]
+            _log(f" Filtered to {len(tally_ledgers)} Selected Ledgers out of {len(all_db_ledgers)} total in DB.")
+        else:
+            tally_ledgers = all_db_ledgers
+            _log(f" Loaded {len(tally_groups)} Groups and {len(tally_ledgers)} Ledgers from DB.")
     else:
-        print("️ Database Manager not loaded. Skipping child sync.")
+        _log("️ Database Manager not loaded. Skipping child sync.")
         tally_groups = []
         tally_ledgers = []
 
@@ -486,7 +497,7 @@ def sync_groups_to_zoho(mapping=None):
                 "filter_by": filter_type   # AccountType.All includes system accounts
             })
             if r.get("code") != 0:
-                print(f"️ Error on page {p} [{filter_type}]: {r.get('message')}")
+                _log(f"️ Error on page {p} [{filter_type}]: {r.get('message')}")
                 break
             batch = r.get("chartofaccounts", [])
             if not batch:
@@ -497,23 +508,23 @@ def sync_groups_to_zoho(mapping=None):
                 k = raw.lower()
                 if k not in seen:
                     seen[k] = acc
-            print(f"    [{filter_type}] Page {p}: {len(batch)} fetched (running total: {len(seen)})")
+            _log(f"    [{filter_type}] Page {p}: {len(batch)} fetched (running total: {len(seen)})")
             if not r.get("page_context", {}).get("has_more_page", False):
                 break
             p += 1
         return seen
 
-    print(" Fetching Chart of Accounts from Zoho — user accounts...")
+    _log(" Fetching Chart of Accounts from Zoho — user accounts...")
     existing_accounts = _fetch_all_accounts("AccountType.Active")
 
     # Also fetch ALL (includes system/built-in accounts like Capital Account, Fixed Assets etc.)
-    print(" Fetching Chart of Accounts from Zoho — including system accounts...")
+    _log(" Fetching Chart of Accounts from Zoho — including system accounts...")
     all_accounts = _fetch_all_accounts("AccountType.All")
     for k, v in all_accounts.items():
         if k not in existing_accounts:
             existing_accounts[k] = v  # merge — system accounts fill the gaps
 
-    print(f" Total accounts in local cache: {len(existing_accounts)} (user + system combined).")
+    _log(f" Total accounts in local cache: {len(existing_accounts)} (user + system combined).")
 
     # ─────────────────────────────────────────────────────────
     # HELPER: When POST says 'already exists', recover from Zoho
@@ -534,7 +545,7 @@ def sync_groups_to_zoho(mapping=None):
             return existing_accounts[key]
 
         # Layer 2: live search_text query with ALL filter
-        print(f"    [Layer 2] Searching Zoho for: '{name}'...")
+        _log(f"    [Layer 2] Searching Zoho for: '{name}'...")
         for filter_val in ["AccountType.All", "AccountType.Active"]:
             search_res = zoho.api_call("GET", "/chartofaccounts", params={
                 "search_text": name,       # correct Zoho search param
@@ -547,11 +558,11 @@ def sync_groups_to_zoho(mapping=None):
                     if decoded.lower() == key:
                         acc["account_name"] = decoded
                         existing_accounts[key] = acc   # cache for future calls
-                        print(f"    [Layer 2] Recovered '{name}' → id={acc.get('account_id')}")
+                        _log(f"    [Layer 2] Recovered '{name}' → id={acc.get('account_id')}")
                         return acc
 
         # Layer 3: Full page scan (last resort — walks all pages with AccountType.All)
-        print(f"    [Layer 3] Full page scan for '{name}'...")
+        _log(f"    [Layer 3] Full page scan for '{name}'...")
         p = 1
         while True:
             r = zoho.api_call("GET", "/chartofaccounts", params={
@@ -567,13 +578,13 @@ def sync_groups_to_zoho(mapping=None):
                 acc["account_name"] = decoded
                 existing_accounts[decoded.lower()] = acc  # cache everything found
                 if decoded.lower() == key:
-                    print(f"    [Layer 3] Recovered '{name}' → id={acc.get('account_id')}")
+                    _log(f"    [Layer 3] Recovered '{name}' → id={acc.get('account_id')}")
                     return acc
             if not r.get("page_context", {}).get("has_more_page", False):
                 break
             p += 1
 
-        print(f"    Account '{name}' not found in Zoho via any method.")
+        _log(f"    Account '{name}' not found in Zoho via any method.")
         return None
 
     # 2b. Detect TALLY-side duplicates (same ledger name, different parents)
@@ -593,7 +604,7 @@ def sync_groups_to_zoho(mapping=None):
             })
 
     if tally_duplicates:
-        print(f"️ Found {len(tally_duplicates)} duplicate ledger names in Tally data!")
+        _log(f"️ Found {len(tally_duplicates)} duplicate ledger names in Tally data!")
 
     # Track Valid Parents for subsequent phases (Name -> {id, type})
     valid_parents = {}
@@ -601,7 +612,7 @@ def sync_groups_to_zoho(mapping=None):
     # ---------------------------------------------------------
     # PHASE 1: Sync Mapped PARENT Groups
     # ---------------------------------------------------------
-    print(f" PHASE 1: Syncing {len(mapping)} Mapped Parent Groups...")
+    _log(f" PHASE 1: Syncing {len(mapping)} Mapped Parent Groups...")
     
     for group_name, user_type in mapping.items():
         if not user_type:
@@ -613,13 +624,14 @@ def sync_groups_to_zoho(mapping=None):
         # Check existence (HTML-decoded cache)
         if group_key in existing_accounts:
             acc_id = existing_accounts[group_key]["account_id"]
-            print(f"⏩ Parent already in Zoho (cached): '{group_name}' → id={acc_id}")
+            _log(f"⏩ Parent already in Zoho (cached): '{group_name}' → id={acc_id}")
+            sync_log.append({"phase": "Parent Groups", "name": group_name, "action": "Skipped", "reason": "Already exists in Zoho", "zoho_type": account_type})
             valid_parents[group_name] = {"id": acc_id, "type": account_type}
             stats["skipped"] += 1
             continue
 
         # Create Parent
-        print(f" Creating Parent Account: '{group_name}'...")
+        _log(f" Creating Parent Account: '{group_name}'...")
         payload = {
             "account_name": group_name,
             "account_type": account_type
@@ -629,14 +641,15 @@ def sync_groups_to_zoho(mapping=None):
 
         if res.get("code") == 0:
             new_acc = res.get("chart_of_account", {})
-            print(f" Created Parent: {group_name}")
+            _log(f" Created Parent: {group_name}")
+            sync_log.append({"phase": "Parent Groups", "name": group_name, "action": "Created", "reason": "New account created in Zoho", "zoho_type": account_type})
             stats["created"] += 1
             existing_accounts[group_key] = new_acc
             valid_parents[group_name] = {"id": new_acc.get("account_id"), "type": account_type}
 
         else:
             error_msg = res.get("message", "")
-            print(f"️ Could not create Parent '{group_name}': {error_msg}")
+            _log(f"️ Could not create Parent '{group_name}': {error_msg}")
 
             # FIX: 'Already exists' → recover the account_id so children are not abandoned
             if "already exists" in error_msg.lower():
@@ -645,17 +658,20 @@ def sync_groups_to_zoho(mapping=None):
                     acc_id = recovered.get("account_id")
                     existing_accounts[group_key] = recovered
                     valid_parents[group_name] = {"id": acc_id, "type": account_type}
-                    print(f" Recovered Parent '{group_name}' → id={acc_id}")
+                    _log(f" Recovered Parent '{group_name}' → id={acc_id}")
+                    sync_log.append({"phase": "Parent Groups", "name": group_name, "action": "Recovered", "reason": "Already exists - recovered ID from Zoho", "zoho_type": account_type})
                     stats["skipped"] += 1
                 else:
+                    sync_log.append({"phase": "Parent Groups", "name": group_name, "action": "Failed", "reason": error_msg, "zoho_type": account_type})
                     stats["failed"] += 1
             else:
+                sync_log.append({"phase": "Parent Groups", "name": group_name, "action": "Failed", "reason": error_msg, "zoho_type": account_type})
                 stats["failed"] += 1
 
     # ---------------------------------------------------------
     # PHASE 2: Sync CHILD Groups (Sub-Accounts) 
     # ---------------------------------------------------------
-    print(f" PHASE 2: Syncing Child Groups under Mapped Parents...")
+    _log(f" PHASE 2: Syncing Child Groups under Mapped Parents...")
 
     for grp in tally_groups:
         tally_name = grp["name"]
@@ -664,7 +680,8 @@ def sync_groups_to_zoho(mapping=None):
         # EXCLUDE: skip Sundry Debtors/Creditors and ALL their descendants
         if tally_name.lower() in excluded_group_names or tally_parent.lower() in excluded_group_names:
             excluded_group_names.add(tally_name.lower())  # propagate exclusion to children
-            print(f" Skipping excluded group: '{tally_name}' (contacts, not chart of accounts)")
+            _log(f" Skipping excluded group: '{tally_name}' (contacts, not chart of accounts)")
+            sync_log.append({"phase": "Child Groups", "name": tally_name, "action": "Excluded", "reason": "Under Sundry Debtors/Creditors (synced as contacts)", "zoho_type": "-"})
             continue
 
         # Check if Parent is Valid (Mapped)
@@ -681,20 +698,22 @@ def sync_groups_to_zoho(mapping=None):
                 
                 # Update Parent Link if mismatched
                 if str(current_parent_id) != str(parent_zoho_id):
-                    print(f" Correcting Parent for Group '{tally_name}'...")
+                    _log(f" Correcting Parent for Group '{tally_name}'...")
                     res = zoho.api_call("PUT", f"/chartofaccounts/{acc_id}", payload={
                          "parent_account_id": parent_zoho_id
                     })
                     if res.get("code") == 0:
-                        print(f" Re-linked Group Parent: {tally_name}")
+                        _log(f" Re-linked Group Parent: {tally_name}")
                         stats["updated"] += 1
+                        sync_log.append({"phase": "Child Groups", "name": tally_name, "action": "Updated", "reason": f"Re-linked parent to {tally_parent}", "zoho_type": account_type})
                 else:
                     stats["skipped"] += 1
+                    sync_log.append({"phase": "Child Groups", "name": tally_name, "action": "Skipped", "reason": "Already exists with correct parent", "zoho_type": account_type})
                 
                 valid_parents[tally_name] = {"id": acc_id, "type": account_type}
                 continue
             
-            print(f" Creating Child Group: '{tally_name}' under '{tally_parent}'...")
+            _log(f" Creating Child Group: '{tally_name}' under '{tally_parent}'...")
 
             payload = {
                 "account_name": tally_name,
@@ -707,14 +726,15 @@ def sync_groups_to_zoho(mapping=None):
 
             if res.get("code") == 0:
                 new_acc = res.get("chart_of_account", {})
-                print(f" Created Child Group: {tally_name}")
+                _log(f" Created Child Group: {tally_name}")
                 stats["children_created"] += 1
+                sync_log.append({"phase": "Child Groups", "name": tally_name, "action": "Created", "reason": f"New sub-group under {tally_parent}", "zoho_type": account_type})
                 existing_accounts[tally_name.lower()] = new_acc
                 valid_parents[tally_name] = {"id": new_acc.get("account_id"), "type": account_type}
 
             else:
                 error_msg = res.get("message", "")
-                print(f"️ Could not create Child Group '{tally_name}': {error_msg}")
+                _log(f"️ Could not create Child Group '{tally_name}': {error_msg}")
 
                 # FIX: 'Already exists' → recover so grandchildren/ledgers are not abandoned
                 if "already exists" in error_msg.lower():
@@ -723,17 +743,20 @@ def sync_groups_to_zoho(mapping=None):
                         acc_id = recovered.get("account_id")
                         existing_accounts[tally_name.lower()] = recovered
                         valid_parents[tally_name] = {"id": acc_id, "type": account_type}
-                        print(f" Recovered Child Group '{tally_name}' → id={acc_id}")
+                        _log(f" Recovered Child Group '{tally_name}' → id={acc_id}")
+                        sync_log.append({"phase": "Child Groups", "name": tally_name, "action": "Recovered", "reason": "Already exists - recovered ID", "zoho_type": account_type})
                         stats["skipped"] += 1
                     else:
+                        sync_log.append({"phase": "Child Groups", "name": tally_name, "action": "Failed", "reason": error_msg, "zoho_type": account_type})
                         stats["failed"] += 1
                 else:
+                    sync_log.append({"phase": "Child Groups", "name": tally_name, "action": "Failed", "reason": error_msg, "zoho_type": account_type})
                     stats["failed"] += 1
 
     # ---------------------------------------------------------
     # PHASE 3: Sync LEDGERS (as Sub-Accounts)
     # ---------------------------------------------------------
-    print(f" PHASE 3: Syncing Ledgers under Valid Groups...")
+    _log(f" PHASE 3: Syncing Ledgers under Valid Groups...")
 
     for ledger in tally_ledgers:
         ledger_name = ledger["name"]
@@ -742,6 +765,7 @@ def sync_groups_to_zoho(mapping=None):
         # EXCLUDE: skip ledgers under Sundry Debtors/Creditors (already Zoho contacts)
         if ledger_parent.lower() in excluded_group_names:
             stats["skipped"] += 1
+            sync_log.append({"phase": "Ledgers", "name": ledger_name, "action": "Excluded", "reason": f"Under {ledger_parent} (contacts)", "zoho_type": "-"})
             continue
         
         # Check if Ledger's Parent is in our Valid Scope (Mapped or Created Child)
@@ -758,18 +782,24 @@ def sync_groups_to_zoho(mapping=None):
                 
                 # Update Parent Link if mismatched
                 if str(current_parent_id) != str(parent_zoho_id):
-                    print(f" Correcting Parent for Ledger '{ledger_name}'...")
+                    _log(f" Correcting Parent for Ledger '{ledger_name}'...")
                     res = zoho.api_call("PUT", f"/chartofaccounts/{acc_id}", payload={
                          "parent_account_id": parent_zoho_id
                     })
                     if res.get("code") == 0:
-                        print(f" Re-linked Ledger Parent: {ledger_name}")
+                        _log(f" Re-linked Ledger Parent: {ledger_name}")
                         stats["updated"] += 1
+                        if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                            database_manager.update_ledger_zoho_status(ledger_name, acc_id, 'synced')
+                        sync_log.append({"phase": "Ledgers", "name": ledger_name, "action": "Updated", "reason": f"Re-linked parent to {ledger_parent}", "zoho_type": account_type})
                 else:
                     stats["skipped"] += 1
+                    if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                        database_manager.update_ledger_zoho_status(ledger_name, acc_id, 'synced')
+                    sync_log.append({"phase": "Ledgers", "name": ledger_name, "action": "Skipped", "reason": "Already exists with correct parent", "zoho_type": account_type})
                 continue
                 
-            print(f" Creating Ledger Account: '{ledger_name}' under '{ledger_parent}'...")
+            _log(f" Creating Ledger Account: '{ledger_name}' under '{ledger_parent}'...")
             
             payload = {
                 "account_name": ledger_name,
@@ -782,9 +812,14 @@ def sync_groups_to_zoho(mapping=None):
             res = zoho.api_call("POST", "/chartofaccounts", payload=payload)
 
             if res.get("code") == 0:
-                print(f" Created Ledger: {ledger_name}")
+                _log(f" Created Ledger: {ledger_name}")
                 stats["ledgers_created"] += 1
-                existing_accounts[ledger_name.lower()] = res.get("chart_of_account", {})
+                new_acc = res.get("chart_of_account", {})
+                new_acc_id = new_acc.get("account_id", "")
+                if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                    database_manager.update_ledger_zoho_status(ledger_name, new_acc_id, 'synced')
+                sync_log.append({"phase": "Ledgers", "name": ledger_name, "action": "Created", "reason": f"New ledger under {ledger_parent}", "zoho_type": account_type})
+                existing_accounts[ledger_name.lower()] = new_acc
 
             else:
                 error_msg = res.get("message", "Unknown error")
@@ -793,15 +828,23 @@ def sync_groups_to_zoho(mapping=None):
                 if "already exists" in error_msg.lower():
                     recovered = recover_existing_account(ledger_name)
                     if recovered:
+                        rec_id = recovered.get("account_id", "")
                         existing_accounts[ledger_name.lower()] = recovered
-                        print(f"⏩ Ledger already exists in Zoho (skipped): '{ledger_name}'")
+                        if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                            database_manager.update_ledger_zoho_status(ledger_name, rec_id, 'synced')
+                        _log(f"⏩ Ledger already exists in Zoho (skipped): '{ledger_name}'")
+                        sync_log.append({"phase": "Ledgers", "name": ledger_name, "action": "Recovered", "reason": "Already exists - recovered ID", "zoho_type": account_type})
                         stats["skipped"] += 1
                     else:
-                        print(f"️ Ledger '{ledger_name}' reported as existing but could not be found.")
+                        _log(f"️ Ledger '{ledger_name}' reported as existing but could not be found.")
+                        sync_log.append({"phase": "Ledgers", "name": ledger_name, "action": "Skipped", "reason": "Reported existing but not found", "zoho_type": account_type})
                         stats["skipped"] += 1
                 else:
-                    print(f" Failed to create Ledger '{ledger_name}': {error_msg}")
+                    _log(f" Failed to create Ledger '{ledger_name}': {error_msg}")
                     stats["failed"] += 1
+                    if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                        database_manager.update_ledger_zoho_status(ledger_name, '', 'failed')
+                    sync_log.append({"phase": "Ledgers", "name": ledger_name, "action": "Failed", "reason": error_msg, "zoho_type": account_type})
                     failed_ledgers.append({
                         "name": ledger_name,
                         "parent": ledger_parent,
@@ -816,7 +859,8 @@ def sync_groups_to_zoho(mapping=None):
         "stats": stats,
         "failed_ledgers": failed_ledgers,
         "duplicates": duplicates,           # Zoho-side duplicates
-        "tally_duplicates": tally_duplicates  # Tally-side duplicates (same name, diff parent)
+        "tally_duplicates": tally_duplicates,  # Tally-side duplicates (same name, diff parent)
+        "sync_log": sync_log                # Detailed action log for every item
     }
 
 def get_gst_treatment(ledger):
@@ -876,15 +920,24 @@ def create_standalone_account(ledger_name, account_type):
         return "overseas"
     return "business_none" # Default
 
-def sync_ledgers_to_zoho(selected_ledgers=None, contact_type_filter=None, update_existing=False):  # OPTIMISED
+def sync_ledgers_to_zoho(selected_ledgers=None, contact_type_filter=None, update_existing=False, log=None):  # OPTIMISED
     """
-    Syncs ledgers to Zoho Books as Contacts.
+    Syncs ledgers to Zoho Books as Contacts with live console logs.
     
     Args:
         selected_ledgers: Optional list of specific ledgers to sync.
         contact_type_filter: 'customer' or 'vendor' — if set, only syncs that type.
                              If None, syncs both customers AND vendors.
+        update_existing: If True, updates existing Zoho contacts.
+        log: Optional logger callback (e.g. SSE job log or print).
     """
+    def _emit(msg):
+        print(f" {msg}")
+        if log and callable(log):
+            try:
+                log(str(msg))
+            except Exception:
+                pass
     try:
         from modules.zoho_connector import zoho
     except ImportError:
@@ -893,6 +946,44 @@ def sync_ledgers_to_zoho(selected_ledgers=None, contact_type_filter=None, update
         except:
             print(" Could not import Zoho Connector")
             return {"status": "error", "message": "Zoho Connector missing"}
+
+    try:
+        import field_mapping_manager
+        customers_mapping = field_mapping_manager.load("customers").get("mapping", {})
+        vendors_mapping = field_mapping_manager.load("vendors").get("mapping", {})
+    except ImportError:
+        customers_mapping = {}
+        vendors_mapping = {}
+
+    def set_nested_value(d, key_path, value):
+        import re
+        parts = key_path.replace(']', '').replace('[', '.').split('.')
+        parts = [p for p in parts if p]
+        
+        current = d
+        for i, part in enumerate(parts[:-1]):
+            next_part = parts[i+1]
+            is_next_list = next_part.isdigit()
+            
+            if part.isdigit():
+                part = int(part)
+                while len(current) <= part:
+                    current.append({} if not is_next_list else [])
+                current = current[part]
+            else:
+                if part not in current:
+                    current[part] = [] if is_next_list else {}
+                current = current[part]
+                
+        last_part = parts[-1]
+        if last_part.isdigit():
+            last_part = int(last_part)
+            while len(current) <= last_part:
+                current.append(None)
+            current[last_part] = value
+        else:
+            current[last_part] = value
+
 
     print(f" Starting Zoho Sync (Ledgers) — Filter: {contact_type_filter or 'all'} | update_existing={bool(update_existing)}...")
 
@@ -935,41 +1026,67 @@ def sync_ledgers_to_zoho(selected_ledgers=None, contact_type_filter=None, update
             ledgers_to_sync = selected_ledgers
 
     # ─────────────────────────────────────────────────────────────────────────
-    # OPTIMISATION: Pre-load ALL existing Zoho contacts ONCE (bulk paginated).
-    # For 1000+ vendors this avoids N individual search API calls and
-    # replaces them with ~5-10 paginated GETs total.
+    # OPTIMISATION: Check SQLite zoho_masters_cache FIRST (Zero API calls)
+    # If not cached, fetch paginated contacts from Zoho and cache to SQLite.
     # ─────────────────────────────────────────────────────────────────────────
-    print(" Pre-loading existing Zoho contacts (bulk fetch — this may take a moment)...")
     existing_contacts = {}   # key: contact_name.lower() -> contact dict
     per_page = 200           # Zoho max per page
-
-    # Pre-load only the contact type(s) we will sync
     types_to_preload = [contact_type_filter] if contact_type_filter else ["customer", "vendor"]
 
-    for ctype in types_to_preload:
-        page = 1
-        while True:
-            res = zoho.api_call("GET", "/contacts", params={
-                "contact_type": ctype,
-                "page": page,
-                "per_page": per_page
-            })
-            if res.get("code") != 0:
-                print(f"️ Could not pre-load {ctype} contacts page {page}: {res.get('message')}")
-                break
+    org_id = ""
+    try:
+        from modules.zoho_connector import _get_creds
+        org_id = _get_creds().get("org_id", "")
+    except Exception:
+        pass
 
-            contacts_page = res.get("contacts", [])
-            for c in contacts_page:
-                key = c["contact_name"].lower().strip()
-                existing_contacts[key] = c
+    # 1. Try loading from SQLite cache
+    cached_contacts = None
+    if database_manager and hasattr(database_manager, 'get_zoho_master_cache'):
+        cached_contacts = database_manager.get_zoho_master_cache('contacts', expected_org_id=org_id)
 
-            has_more = res.get("page_context", {}).get("has_more_page", False)
-            print(f"    Loaded {ctype} page {page} — {len(contacts_page)} contacts (has_more={has_more})")
-            if not has_more:
-                break
-            page += 1
+    if cached_contacts and isinstance(cached_contacts, (dict, list)):
+        print(f" Loaded {len(cached_contacts)} Zoho contacts from local SQLite master cache.")
+        if isinstance(cached_contacts, dict):
+            for k, c in cached_contacts.items():
+                cname = (c.get("contact_name") or c.get("original_name") or k).lower().strip()
+                existing_contacts[cname] = c
+        elif isinstance(cached_contacts, list):
+            for c in cached_contacts:
+                cname = (c.get("contact_name") or c.get("original_name") or "").lower().strip()
+                if cname:
+                    existing_contacts[cname] = c
+    else:
+        print(" Pre-loading existing Zoho contacts from Zoho Books API (paginated)...")
+        for ctype in types_to_preload:
+            page = 1
+            while True:
+                res = zoho.api_call("GET", "/contacts", params={
+                    "contact_type": ctype,
+                    "page": page,
+                    "per_page": per_page
+                })
+                if res.get("code") != 0:
+                    print(f"️ Could not pre-load {ctype} contacts page {page}: {res.get('message')}")
+                    break
 
-    print(f" Pre-loaded {len(existing_contacts)} existing Zoho contacts into memory.")
+                contacts_page = res.get("contacts", [])
+                for c in contacts_page:
+                    key = c["contact_name"].lower().strip()
+                    existing_contacts[key] = c
+
+                has_more = res.get("page_context", {}).get("has_more_page", False)
+                print(f"    Loaded {ctype} page {page} — {len(contacts_page)} contacts (has_more={has_more})")
+                if not has_more:
+                    break
+                page += 1
+
+        # Cache to SQLite DB for future zero-API lookups
+        if database_manager and hasattr(database_manager, 'save_zoho_master_cache'):
+            database_manager.save_zoho_master_cache('contacts', existing_contacts, org_id=org_id)
+            print(f" Saved {len(existing_contacts)} contacts to SQLite master cache.")
+
+    print(f" Available {len(existing_contacts)} Zoho contacts for reconciliation.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # MAIN SYNC LOOP — uses local map for existence check (zero extra GETs)
@@ -1034,7 +1151,7 @@ def sync_ledgers_to_zoho(selected_ledgers=None, contact_type_filter=None, update
             continue  # Already in Zoho, skip silently
 
         address_str = clean_address(l.get("address", ""))  # joins multi-line with ', '
-        city        = ""
+        city        = clean(l.get("city", ""))
         state       = clean(l.get("state", ""))
         zip_code    = clean(l.get("pincode", ""))
         country     = clean(l.get("country", ""))
@@ -1083,22 +1200,29 @@ def sync_ledgers_to_zoho(selected_ledgers=None, contact_type_filter=None, update
             if state:
                 payload["place_of_supply"] = state
 
-        # Add contact_persons so it matches the manual pattern in Zoho UI.
-        if email or mobile:
-            payload["contact_persons"] = [{
-                "first_name": "",
-                "last_name": name,
-                "email": email,
-                "mobile": mobile,
-                "phone": "",
-                "is_primary_contact": True
-            }]
 
-        # CREATE — new contact (no per-vendor search needed)
+        # --- DYNAMIC FIELD MAPPING OVERRIDE ---
+        mapping = customers_mapping if contact_type == "customer" else vendors_mapping
+        for zoho_key, tally_key in mapping.items():
+            tally_val = l.get(tally_key)
+            if tally_val is not None:
+                # Clean strings slightly if needed
+                if isinstance(tally_val, str):
+                    if tally_key == "address":
+                        tally_val = clean_address(tally_val)
+                    elif tally_key == "phone":
+                        tally_val = normalize_mobile(tally_val)
+                    else:
+                        tally_val = clean(tally_val)
+                        
+                set_nested_value(payload, zoho_key, tally_val)
+
+        # CREATE / UPDATE — with [{idx}/{total}] progress logging format
         if exists:
             contact_id = (existing_contacts.get(name_key) or {}).get("contact_id")
             if not contact_id:
                 stats["skipped"] += 1
+                _emit(f"[{idx}/{total}] ⏩ Skipped (missing ID): {name}")
                 continue
             payload["phone"] = ""  # keep Phone empty; only Mobile should be filled
             if payload.get("contact_persons"):
@@ -1116,23 +1240,39 @@ def sync_ledgers_to_zoho(selected_ledgers=None, contact_type_filter=None, update
             res = zoho.api_call("PUT", f"/contacts/{contact_id}", payload=payload)
             if res.get("code") == 0:
                 stats["updated"] += 1
-                print(f" Updated ({contact_type}): {name}")
+                if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                    database_manager.update_ledger_zoho_status(name, contact_id, 'synced')
+                _emit(f"[{idx}/{total}]  Updated ({contact_type}): {name}")
             else:
                 stats["failed"] += 1
                 err_msg = res.get('message', 'Unknown error')
                 failed_names.append({"name": name, "reason": err_msg})
-                print(f" Update Failed {name}: {err_msg}")
+                if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                    database_manager.update_ledger_zoho_status(name, contact_id or '', 'failed')
+                _emit(f"[{idx}/{total}] ❌ Update Failed '{name}': {err_msg}")
         else:
             res = zoho.api_call("POST", "/contacts", payload=payload)
             if res.get("code") == 0:
                 stats["created"] += 1
-                existing_contacts[name_key] = res.get("contact", {})
-                print(f" Created ({contact_type}): {name}")
+                new_contact = res.get("contact", {})
+                new_cid = new_contact.get("contact_id", "")
+                existing_contacts[name_key] = new_contact
+                if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                    database_manager.update_ledger_zoho_status(name, new_cid, 'synced')
+                _emit(f"[{idx}/{total}]  Created ({contact_type}): {name}")
             else:
                 stats["failed"] += 1
                 err_msg = res.get('message', 'Unknown error')
                 failed_names.append({"name": name, "reason": err_msg})
-                print(f" Create Failed {name}: {err_msg}")
+                if database_manager and hasattr(database_manager, 'update_ledger_zoho_status'):
+                    database_manager.update_ledger_zoho_status(name, '', 'failed')
+                _emit(f"[{idx}/{total}] ❌ Create Failed '{name}': {err_msg}")
 
-    print(f"\n Sync Complete — Created: {stats['created']}, Skipped: {stats['skipped']}, Failed: {stats['failed']}")
+    # Persist updated contacts state to local SQLite master cache
+    if (stats["created"] > 0 or stats["updated"] > 0) and database_manager and hasattr(database_manager, 'save_zoho_master_cache'):
+        database_manager.save_zoho_master_cache('contacts', existing_contacts, org_id=org_id)
+        _emit(f" Updated SQLite master cache with latest contacts state.")
+
+    _emit(f"Sync Complete — Created: {stats['created']}, Updated: {stats['updated']}, Skipped: {stats['skipped']}, Failed: {stats['failed']}")
     return {"status": "success", "stats": stats, "failed_contacts": failed_names}
+

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -69,101 +69,153 @@
     </nav>
 
     <div class="container-fluid p-0">
-
-        <!-- HEADER & ACTIONS -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <div>
-                <h4 class="fw-bold mb-1">Credit Note Vouchers</h4>
-                <p class="text-muted small mb-0">View and sync Credit Notes from Tally</p>
+        
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 1 — GET DATA (Import from Tally or Upload a file)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#5e35b1 !important;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#5e35b1;font-size:13px;">STEP 1</span>
+                    <span class="fw-semibold">Get Data</span>
+                    <span class="text-muted small">— Import credit notes from Tally or upload a JSON file</span>
+                </div>
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">From Date</label>
+                        <input type="date" id="fromDate" class="form-control" value="2025-04-01" onchange="applyFilters()">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">To Date</label>
+                        <input type="date" id="toDate" class="form-control" value="2025-04-30" onchange="applyFilters()">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">Limit</label>
+                        <input type="number" id="limitInput" class="form-control" placeholder="All">
+                    </div>
+                    <div class="col-md-2">
+                        <button onclick="fetchData()" id="importBtn" class="btn btn-primary w-100">
+                            <i class="bi bi-cloud-download me-1"></i> Import from Tally
+                        </button>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="file" id="jsonUpload" accept=".json" style="display:none" onchange="uploadJson(event)">
+                        <button onclick="document.getElementById('jsonUpload').click()" id="uploadBtn" class="btn btn-outline-primary w-100">
+                            <i class="bi bi-upload me-1"></i> Upload JSON
+                        </button>
+                    </div>
+                </div>
             </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 2 — REVIEW (Filter by month, see totals)
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#0288d1 !important;">
+            <div class="p-3">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#0288d1;font-size:13px;">STEP 2</span>
+                    <span class="fw-semibold">Review &amp; Filter</span>
+                    <span class="text-muted small">— Filter by month, check totals, select credit notes</span>
+                    <span id="activeMonthBadge" class="badge bg-primary ms-2" style="display:none;"></span>
+                </div>
+
+                <!-- Month Quick Filter Pills -->
+                <div class="d-flex align-items-center flex-wrap gap-1 mb-3">
+                    <span class="text-muted small fw-bold me-1"><i class="bi bi-calendar3 me-1"></i>Month:</span>
+                    <button class="month-pill" onclick="quickMonth('202504')">Apr 25</button>
+                    <button class="month-pill" onclick="quickMonth('202505')">May 25</button>
+                    <button class="month-pill" onclick="quickMonth('202506')">Jun 25</button>
+                    <button class="month-pill" onclick="quickMonth('202507')">Jul 25</button>
+                    <button class="month-pill" onclick="quickMonth('202508')">Aug 25</button>
+                    <button class="month-pill" onclick="quickMonth('202509')">Sep 25</button>
+                    <button class="month-pill" onclick="quickMonth('202510')">Oct 25</button>
+                    <button class="month-pill" onclick="quickMonth('202511')">Nov 25</button>
+                    <button class="month-pill" onclick="quickMonth('202512')">Dec 25</button>
+                    <button class="month-pill" onclick="quickMonth('202601')">Jan 26</button>
+                    <button class="month-pill" onclick="quickMonth('202602')">Feb 26</button>
+                    <button class="month-pill" onclick="quickMonth('202603')">Mar 26</button>
+                    <button class="btn btn-sm btn-outline-secondary ms-1" onclick="clearMonthFilter()">
+                        <i class="bi bi-x-circle me-1"></i>Clear Filter
+                    </button>
+                </div>
+
+                <!-- KPI Cards -->
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="kpi-card" style="border-color:#5e35b1">
+                            <div class="kpi-label">Total Credit Note Vouchers</div>
+                            <div class="kpi-value" id="total-credit-notes">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="kpi-card" style="border-color:#e53935">
+                            <div class="kpi-label">Total Amount Transferred</div>
+                            <div class="kpi-value text-danger" id="total-amount">₹0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════════════════════════════════════
+             STEP 3 — SYNC TO ZOHO
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card mb-3 border-start border-4" style="border-color:#2e7d32 !important;">
+            <div class="p-3 d-flex align-items-center flex-wrap gap-3">
+                <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
+                <span class="fw-semibold">Sync to Zoho Books</span>
+                <div class="d-flex gap-2 ms-auto flex-wrap">
+                    <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success" disabled>
+                        <i class="bi bi-cloud-upload me-1"></i> Sync Selected
+                    </button>
+                    <button onclick="syncFilteredMonth()" id="syncMonthBtn" class="btn btn-outline-success">
+                        <i class="bi bi-calendar2-check me-1"></i> Sync Filtered Range
+                    </button>
+                    <button onclick="syncZoho()" id="syncBtn" class="btn btn-dark">
+                        <i class="bi bi-arrow-repeat me-1"></i> Sync All
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SELECTION STATUS BAR -->
+        <div id="selectionBar" class="alert alert-success d-flex align-items-center justify-content-between py-2 px-3 mb-3" style="display:none; border-radius:10px;">
+            <span><i class="bi bi-check2-square me-2"></i><strong id="selectedCount">0</strong> credit note(s) selected</span>
             <div class="d-flex gap-2">
-                <button id="syncBtn" onclick="syncZoho()" class="btn btn-outline-secondary d-flex align-items-center">
-                    <i class="bi bi-arrow-repeat me-2"></i> Sync to Zoho (Beta)
-                </button>
-                <input type="file" id="jsonUpload" accept=".json" style="display: none;" onchange="uploadJson(event)">
-                <button id="uploadBtn" onclick="document.getElementById('jsonUpload').click()" class="btn btn-warning d-flex align-items-center">
-                    <i class="bi bi-upload me-2"></i> Upload JSON
-                </button>
-                <button id="importBtn" onclick="fetchData()" class="btn btn-secondary d-flex align-items-center">
-                    <i class="bi bi-cloud-download me-2"></i> Import from Tally
-                </button>
+                <button class="btn btn-sm btn-success" onclick="insertSelected()"><i class="bi bi-cloud-upload me-1"></i> Sync Selected</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="selectAllVisible(true)">Select All</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="selectAllVisible(false)">Clear</button>
             </div>
         </div>
 
-        <!-- DATE RANGE SELECTOR -->
-        <div class="content-card mb-4 p-3 border-top border-secondary border-3">
-            <div class="row g-3 align-items-end">
-                <div class="col-md-3">
-                    <label class="form-label small fw-bold">From Date</label>
-                    <input type="date" id="fromDate" class="form-control" value="2025-04-01">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label small fw-bold">To Date</label>
-                    <input type="date" id="toDate" class="form-control" value="2025-04-30">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label small fw-bold">Limit (optional)</label>
-                    <input type="number" id="limitInput" class="form-control" placeholder="All">
-                </div>
-                <div class="col-md-4">
-                    <button onclick="fetchData()" class="btn btn-secondary w-100">
-                        <i class="bi bi-funnel me-2"></i> Apply Filter
-                    </button>
-                </div>
-            </div>
-        </div>
+        <!-- FIELD MAPPING hidden input -->
+        <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
 
-        <!-- KPI CARDS -->
-        <div class="row g-3 mb-4">
-            <div class="col-md-6">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Credit Note Vouchers</div>
-                    <div class="kpi-value" id="total-credit-notes">0</div>
-                </div>
-            </div>
-            <div class="col-md-6">
-                <div class="kpi-card">
-                    <div class="kpi-label">Total Amount Transferred</div>
-                    <div class="kpi-value" id="total-amount">₹0</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- TABLE -->
-              <!-- FIELD MAPPING: hidden file input -->
-      <input type="file" id="fmZohoFieldsInput" accept=".xlsx,.csv" style="display:none" onchange="fmUploadZohoFields(this)" />
-
-<div class="content-card">
+        <!-- ═══════════════════════════════════════════════════════════
+             CREDIT NOTES TABLE
+        ════════════════════════════════════════════════════════════ -->
+        <div class="content-card">
+            <!-- Table toolbar -->
             <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div class="input-group" style="max-width: 300px;">
+                <div class="input-group" style="max-width:280px;">
                     <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search credit notes..." onkeyup="handleSearch()">
+                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search credit note # or account..." onkeyup="applyFilters()">
                 </div>
-                <div class="d-flex gap-2 align-items-center flex-wrap">
-                    <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
-                      onclick="document.getElementById('fmZohoFieldsInput').click()"
-                      title="Upload Zoho Books sample XLSX or CSV">
-                      <i class="bi bi-file-earmark-arrow-up"></i> Import Zoho Fields
-                    </button>
-                    <button id="fmMappingBtn" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1"
-                      disabled onclick="fmOpenModal()" title="Map Tally DB fields to Zoho Books fields">
-                      <i class="bi bi-diagram-2"></i> Field Mapping
-                    </button>
-                    <button id="fmExportBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1"
-                      style="display:none" onclick="window.open('/api/field-mapping/' + FM_MODULE + '/export','_blank')">
-                      <i class="bi bi-cloud-upload"></i> Export for Zoho
-                    </button>
-                </div>
+                <div id="filterStatus" class="text-muted small fw-semibold"></div>
             </div>
             <div id="fmStatusBar" class="px-3 py-1 small" style="display:none"></div>
-</div>
-            </div>
+
             <div class="table-responsive" style="max-height: 600px;">
                 <table class="table table-hover align-middle mb-0">
-                    <thead class="sticky-top">
+                    <thead class="sticky-top" style="background:#f8fafc;">
                         <tr>
+                            <th style="width:40px;">
+                                <input type="checkbox" id="selectAllChk" class="form-check-input" title="Select / Deselect All" onchange="selectAllVisible(this.checked)">
+                            </th>
                             <th>Credit Note #</th>
                             <th>Date</th>
+                            <th>Ref Invoice #</th>
                             <th>From (Credit)</th>
                             <th>To (Debit)</th>
                             <th class="text-end">Amount Transferred</th>
@@ -171,12 +223,16 @@
                         </tr>
                     </thead>
                     <tbody id="tableBody">
-                        <tr><td colspan="6" class="text-center py-4 text-muted">No Data Found. Try fetching or uploading.</td></tr>
+                        <tr>
+                            <td colspan="7" class="text-center py-5 text-muted">
+                                <i class="bi bi-arrow-left-right fs-1 mb-2"></i><br>
+                                Click "Import from Tally" or select a filter
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
         </div>
-
     </div>
 
     <!-- MODAL -->
@@ -241,8 +297,21 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let allCreditNotes = [];
-        let totalAmount = 0;
+        let activeMonth = '';
+        let currentFilteredCreditNotes = [];
 
+        const MONTH_NAMES = {
+            '202404': 'April 2024', '202405': 'May 2024', '202406': 'June 2024',
+            '202407': 'July 2024', '202408': 'August 2024', '202409': 'September 2024',
+            '202410': 'October 2024', '202411': 'November 2024', '202412': 'December 2024',
+            '202501': 'January 2025', '202502': 'February 2025', '202503': 'March 2025',
+            '202504': 'April 2025', '202505': 'May 2025', '202506': 'June 2025',
+            '202507': 'July 2025', '202508': 'August 2025', '202509': 'September 2025',
+            '202510': 'October 2025', '202511': 'November 2025', '202512': 'December 2025',
+            '202601': 'January 2026', '202602': 'February 2026', '202603': 'March 2026'
+        };
+
+        // Load DB credit notes on startup
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const res = await fetch('/api/db/credit_notes');
@@ -250,36 +319,116 @@
                     const data = await res.json();
                     if (data.credit_notes && data.credit_notes.length > 0) {
                         allCreditNotes = data.credit_notes;
-                        totalAmount = data.total_amount;
-                        updateKPIs();
-                        renderCreditNotes(allCreditNotes);
-                        return;
+                        // Default to April 2025 filter
+                        quickMonth('202504');
                     }
                 }
             } catch (err) {
-                console.log('Could not load from DB, trying localStorage...');
-            }
-
-            const dataStr = localStorage.getItem('creditNoteData');
-            if (dataStr) {
-                try {
-                    const data = JSON.parse(dataStr);
-                    allCreditNotes = data.credit_notes || [];
-                    totalAmount = data.total_amount || 0;
-                    updateKPIs();
-                    renderCreditNotes(allCreditNotes);
-                } catch(e) {}
+                console.warn('DB load failed:', err);
             }
         });
+
+        function quickMonth(ym) {
+            activeMonth = (activeMonth === ym) ? '' : ym;
+            if (activeMonth) {
+                const year = activeMonth.slice(0, 4);
+                const month = activeMonth.slice(4, 6);
+                const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+                document.getElementById('fromDate').value = `${year}-${month}-01`;
+                document.getElementById('toDate').value = `${year}-${month}-${lastDay < 10 ? '0' + lastDay : lastDay}`;
+            }
+            updatePillUI();
+            applyFilters();
+        }
+
+        function clearMonthFilter() {
+            activeMonth = '';
+            updatePillUI();
+            applyFilters();
+        }
+
+        function updatePillUI() {
+            document.querySelectorAll('.month-pill').forEach(btn => {
+                const ym = btn.getAttribute('onclick').match(/'(\d+)'/)?.[1];
+                btn.classList.toggle('active', ym === activeMonth);
+            });
+            const badge = document.getElementById('activeMonthBadge');
+            if (badge) {
+                if (activeMonth) {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = MONTH_NAMES[activeMonth] || activeMonth;
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
+        }
+
+        function getNormalizedDate(d) {
+            if (!d) return '';
+            return String(d).replace(/-/g, '').trim();
+        }
+
+        function formatDate(tallyDate) {
+            if (!tallyDate) return '';
+            const d = getNormalizedDate(tallyDate);
+            if (d.length !== 8) return tallyDate;
+            return `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}`;
+        }
 
         function formatDateForAPI(dateInput) {
             return dateInput.replace(/-/g, '');
         }
 
-        function formatDate(d) {
-            if (!d || d.length !== 8) return d || '';
-            return d.slice(6,8) + '/' + d.slice(4,6) + '/' + d.slice(0,4);
+        function applyFilters() {
+            const q = document.getElementById('searchInput').value.toLowerCase().trim();
+            const fromDateStr = getNormalizedDate(document.getElementById('fromDate').value);
+            const toDateStr = getNormalizedDate(document.getElementById('toDate').value);
+            const limitInput = document.getElementById('limitInput').value;
+            const limitVal = limitInput ? parseInt(limitInput) : null;
+
+            let filtered = allCreditNotes.filter(c => {
+                let match = true;
+                const cnDate = getNormalizedDate(c.date);
+
+                if (activeMonth) {
+                    if (!cnDate.startsWith(activeMonth)) match = false;
+                } else {
+                    if (fromDateStr && cnDate && cnDate < fromDateStr) match = false;
+                    if (toDateStr && cnDate && cnDate > toDateStr) match = false;
+                }
+
+                if (match && q) {
+                    const cnNo = (c.credit_note_number || '').toLowerCase();
+                    const fromAcc = (c.from_account || '').toLowerCase();
+                    const toAcc = (c.to_account || '').toLowerCase();
+                    const amtStr = (c.amount || '').toString();
+                    if (!cnNo.includes(q) && !fromAcc.includes(q) && !toAcc.includes(q) && !amtStr.includes(q)) match = false;
+                }
+
+                return match;
+            });
+
+            if (limitVal && limitVal > 0) {
+                filtered = filtered.slice(0, limitVal);
+            }
+
+            currentFilteredCreditNotes = filtered;
+
+            // Recalculate KPIs dynamically for filtered set
+            const totalAmount = filtered.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+            document.getElementById('total-credit-notes').innerText = filtered.length.toLocaleString();
+            document.getElementById('total-amount').innerText = '₹' + totalAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+            const status = document.getElementById('filterStatus');
+            if (status) {
+                status.textContent = filtered.length !== allCreditNotes.length
+                    ? `Showing ${filtered.length} of ${allCreditNotes.length} credit notes` : '';
+            }
+
+            renderCreditNotes(filtered);
         }
+
+        function handleSearch() { applyFilters(); }
 
         async function uploadJson(event) {
             const file = event.target.files[0];
@@ -303,13 +452,7 @@
                     alert('Error: ' + data.error);
                 } else {
                     allCreditNotes = data.credit_notes || [];
-                    totalAmount = data.total_amount || 0;
-                    localStorage.setItem('creditNoteData', JSON.stringify({
-                        credit_notes: allCreditNotes,
-                        total_amount: totalAmount
-                    }));
-                    updateKPIs();
-                    renderCreditNotes(allCreditNotes);
+                    applyFilters();
                 }
             } catch (error) {
                 alert('Upload failed: ' + error.message);
@@ -341,27 +484,8 @@
 
                 if (data.error) { alert('Error: ' + data.error); return; }
 
-                await new Promise(r => setTimeout(r, 500));
-                
-                try {
-                    const dbRes = await fetch('/api/db/credit_notes');
-                    if (dbRes.ok) {
-                        const dbData = await dbRes.json();
-                        allCreditNotes = dbData.credit_notes || [];
-                        totalAmount = dbData.total_amount || 0;
-                        localStorage.setItem('creditNoteData', JSON.stringify(dbData));
-                    } else {
-                        allCreditNotes = data.credit_notes || [];
-                        totalAmount = data.total_amount || 0;
-                        localStorage.setItem('creditNoteData', JSON.stringify(data));
-                    }
-                } catch (e) {
-                    allCreditNotes = data.credit_notes || [];
-                    totalAmount = data.total_amount || 0;
-                }
-
-                updateKPIs();
-                renderCreditNotes(allCreditNotes);
+                allCreditNotes = data.credit_notes || [];
+                applyFilters();
             } catch (err) {
                 console.error(err);
                 alert('Connection Error');
@@ -372,78 +496,139 @@
         }
 
         async function syncZoho() {
-            if (!confirm("This will sync Credit Note vouchers to Zoho Books. Continue?")) return;
+            if (!confirm("This will sync all credit notes to Zoho Books. Continue?")) return;
+            await _pushCreditNotesToZoho(allCreditNotes, 'syncBtn');
+        }
 
-            const btn = document.getElementById('syncBtn');
-            const orig = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+        async function syncFilteredMonth() {
+            if (!currentFilteredCreditNotes || currentFilteredCreditNotes.length === 0) {
+                alert('No credit notes found in the current filter range to sync.');
+                return;
+            }
+            const label = activeMonth ? (MONTH_NAMES[activeMonth] || activeMonth) : 'current filter';
+            if (!confirm(`Sync ${currentFilteredCreditNotes.length} credit note(s) for ${label} to Zoho Books?`)) return;
+
+            await _pushCreditNotesToZoho(currentFilteredCreditNotes, 'syncMonthBtn');
+        }
+
+        async function insertSelected() {
+            const checked = document.querySelectorAll('.cn-chk:checked');
+            if (checked.length === 0) {
+                alert('Please select at least one credit note first.');
+                return;
+            }
+
+            const selectedNotes = Array.from(checked).map(chk => allCreditNotes[parseInt(chk.dataset.idx)]);
+            if (!confirm(`Sync ${selectedNotes.length} selected credit note(s) to Zoho Books?`)) return;
+
+            await _pushCreditNotesToZoho(selectedNotes, 'insertSelectedBtn');
+        }
+
+        async function _pushCreditNotesToZoho(creditNotes, btnId) {
+            const btn = document.getElementById(btnId);
+            const originalHTML = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+            }
 
             try {
                 const res = await fetch('/api/credit_note/sync_zoho', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ credit_notes: null })
+                    body: JSON.stringify({ credit_notes: creditNotes })
                 });
                 const data = await res.json();
 
                 if (data.status === 'success') {
-                    let msg = 'Zoho Sync Complete!\\n\\n';
-                    msg += `Total: ${data.total} | Success: ${data.success} | Failed: ${data.failed}\\n\\n`;
+                    let msg = 'Zoho Sync Complete!\n\n';
+                    msg += `Total: ${data.total} | Success: ${data.success} | Failed: ${data.failed}\n\n`;
                     if (data.failed > 0 && data.errors) {
-                        msg += 'Failed:\\n';
+                        msg += 'Failed:\n';
                         data.errors.forEach((e, i) => {
-                            msg += `${i+1}. #${e.credit_note_number} - ${e.error}\\n`;
+                            msg += `${i+1}. #${e.credit_note_number} - ${e.error}\n`;
                         });
                     }
                     alert(msg);
+                    selectAllVisible(false);
                 } else {
                     alert('Sync Error: ' + data.message);
                 }
             } catch (err) {
                 alert('Connection Error during Sync');
             } finally {
-                btn.disabled = false;
-                btn.innerHTML = orig;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHTML;
+                }
+                updateSelectionUI();
             }
-        }
-
-        function updateKPIs() {
-            document.getElementById('total-credit-notes').innerText = allCreditNotes.length;
-            document.getElementById('total-amount').innerText = '₹' + (totalAmount || 0).toLocaleString();
-        }
-
-        function handleSearch() {
-            const q = document.getElementById('searchInput').value.toLowerCase();
-            const filtered = allCreditNotes.filter(c => 
-                (c.credit_note_number || '').toLowerCase().includes(q) ||
-                (c.from_account || '').toLowerCase().includes(q) ||
-                (c.to_account || '').toLowerCase().includes(q) ||
-                (c.amount || '').toString().includes(q)
-            );
-            renderCreditNotes(filtered);
         }
 
         function renderCreditNotes(credit_notes) {
+            currentFilteredCreditNotes = credit_notes;
             const tbody = document.getElementById('tableBody');
             if (!credit_notes || credit_notes.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">No Credit Notes Found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">No Credit Notes Found</td></tr>';
+                updateSelectionUI();
                 return;
             }
-            tbody.innerHTML = credit_notes.map((c, i) => `
-                <tr style="cursor:pointer" onclick="showDetails(${i})">
-                    <td class="fw-medium">${c.credit_note_number || '-'}</td>
+
+            tbody.innerHTML = credit_notes.map((c) => {
+                const realIdx = allCreditNotes.indexOf(c);
+                const amt = parseFloat(c.amount) || 0;
+                return `
+                <tr style="cursor:pointer" onclick="showDetails(${realIdx})">
+                    <td onclick="event.stopPropagation()">
+                        <input type="checkbox" class="form-check-input cn-chk" data-idx="${realIdx}"
+                            onchange="updateSelectionUI()">
+                    </td>
+                    <td class="fw-medium text-primary">${c.credit_note_number || '-'}</td>
                     <td>${formatDate(c.date)}</td>
+                    <td><span class="badge bg-light text-dark border font-monospace">${c.reference_number || '-'}</span></td>
                     <td class="text-danger">${c.from_account || '-'}</td>
                     <td class="text-success">${c.to_account || '-'}</td>
-                    <td class="text-end fw-bold">₹${(c.amount || 0).toLocaleString()}</td>
+                    <td class="text-end fw-bold">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
                     <td class="text-center">
-                        <button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); showDetails(${i})">
+                        <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showDetails(${realIdx})">
                             <i class="bi bi-eye"></i> View
                         </button>
                     </td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
+            updateSelectionUI();
+        }
+
+        function updateSelectionUI() {
+            const checked = document.querySelectorAll('.cn-chk:checked');
+            const count   = checked.length;
+            const all     = document.querySelectorAll('.cn-chk');
+            const bar     = document.getElementById('selectionBar');
+            const btn     = document.getElementById('insertSelectedBtn');
+            const allChk  = document.getElementById('selectAllChk');
+
+            if (bar) bar.style.display = count > 0 ? 'flex' : 'none';
+            const countEl = document.getElementById('selectedCount');
+            if (countEl) countEl.innerText = count;
+
+            if (btn) {
+                btn.disabled = count === 0;
+                btn.innerHTML = count > 0
+                    ? `<i class="bi bi-cloud-upload me-1"></i> Sync ${count} Selected`
+                    : '<i class="bi bi-cloud-upload me-1"></i> Sync Selected';
+            }
+
+            if (allChk) {
+                allChk.checked       = all.length > 0 && count === all.length;
+                allChk.indeterminate = count > 0 && count < all.length;
+            }
+        }
+
+        function selectAllVisible(checked) {
+            document.querySelectorAll('.cn-chk').forEach(chk => chk.checked = checked);
+            const allChk = document.getElementById('selectAllChk');
+            if (allChk) allChk.checked = checked;
+            updateSelectionUI();
         }
 
         function showDetails(idx) {
@@ -482,6 +667,7 @@
                         <table class="table table-sm">
                             <tr><th width="40%">Credit Note #:</th><td>${c.credit_note_number || '-'}</td></tr>
                             <tr><th>Date:</th><td>${formatDate(c.date)}</td></tr>
+                            <tr><th>Ref Invoice #:</th><td><span class="badge bg-primary-subtle text-primary border fw-bold">${c.reference_number || '-'}</span></td></tr>
                             <tr><th>Amount:</th><td class="fw-bold">₹${(c.amount || 0).toLocaleString()}</td></tr>
                         </table>
                     </div>
@@ -515,7 +701,6 @@
                             <thead class="bg-light"><tr><th>Category - Cost Center</th><th class="text-end">Amount</th></tr></thead>
                             <tbody>${costCenterRows}</tbody>
                         </table>
-                    </div>
                     <div class="col-12 mt-3">
                         <h6 class="text-secondary border-bottom pb-2">Ledger Breakdown</h6>
                         <table class="table table-sm table-hover border">

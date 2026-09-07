@@ -19,15 +19,9 @@ except ImportError:
     print("️ Warning: Could not import database_manager. SQLite sync will be skipped.")
     database_manager = None
 
-# Load environment variables
-load_dotenv()
+from journel.journel_backend import _get_creds
 
 TALLY_URL = "http://localhost:9000"
-BASE_URL = "https://www.zohoapis.com/books/v3"
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
-ORGANIZATION_ID = os.getenv("ORGANIZATION_ID")
 
 # Cache for customer payment terms to avoid repeated queries
 customer_payment_terms_cache = {}
@@ -402,12 +396,12 @@ def get_zoho_contacts(token):
     try:
         while True:
             params = {
-                "organization_id": ORGANIZATION_ID,
+                "organization_id": creds["org_id"],
                 "page": page,
                 "per_page": per_page
             }
             
-            res = requests.get(f"{BASE_URL}/contacts", headers=headers, params=params)
+            res = requests.get(f"{creds['base_url']}/contacts", headers=headers, params=params)
             if res.status_code == 200 and res.json().get("code") == 0:
                 contacts = res.json().get("contacts", [])
                 
@@ -437,11 +431,12 @@ def get_zoho_contacts(token):
 
 def get_zoho_accounts(token):
     """Fetch all accounts (chart of accounts) from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/chartofaccounts", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/chartofaccounts", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             all_accounts = res.json().get("chartofaccounts", [])
             account_map = {acc["account_name"].lower(): acc for acc in all_accounts}
@@ -452,11 +447,12 @@ def get_zoho_accounts(token):
 
 def get_zoho_payment_terms_list(token):
     """Fetch payment terms from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/settings/paymentterms", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/paymentterms", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             terms_data = res.json().get("data", {})
             terms_list = terms_data.get("payment_terms", [])
@@ -473,11 +469,12 @@ def get_zoho_payment_terms_list(token):
 
 def get_zoho_taxes(token):
     """Fetch tax rates from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/settings/taxes", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/taxes", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             all_taxes = res.json().get("taxes", [])
             
@@ -507,11 +504,12 @@ def get_zoho_taxes(token):
 
 def get_zoho_tags(token):
     """Fetch reporting tags from Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     try:
-        res = requests.get(f"{BASE_URL}/settings/tags", headers=headers, params=params)
+        res = requests.get(f"{creds['base_url']}/settings/tags", headers=headers, params=params)
         if res.status_code == 200 and res.json().get("code") == 0:
             categories = res.json().get("reporting_tags", [])
             tag_map = {}
@@ -521,7 +519,7 @@ def get_zoho_tags(token):
                 tag_name = category.get("tag_name")
                 
                 # Get detailed options for this tag
-                detail_res = requests.get(f"{BASE_URL}/settings/tags/{tag_id}", headers=headers, params=params)
+                detail_res = requests.get(f"{creds['base_url']}/settings/tags/{tag_id}", headers=headers, params=params)
                 if detail_res.status_code == 200:
                     detail_data = detail_res.json()
                     tag_obj = detail_data.get("tag", detail_data.get("reporting_tag", {}))
@@ -544,6 +542,7 @@ def get_zoho_tags(token):
 
 def get_zoho_items(token):
     """Fetch all items from Zoho Books with their reporting tags"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
     
     all_items = {}
@@ -553,12 +552,12 @@ def get_zoho_items(token):
     try:
         while True:
             params = {
-                "organization_id": ORGANIZATION_ID,
+                "organization_id": creds["org_id"],
                 "page": page,
                 "per_page": per_page
             }
             
-            res = requests.get(f"{BASE_URL}/items", headers=headers, params=params)
+            res = requests.get(f"{creds['base_url']}/items", headers=headers, params=params)
             if res.status_code == 200 and res.json().get("code") == 0:
                 items = res.json().get("items", [])
                 
@@ -624,8 +623,9 @@ def find_customer_in_zoho(customer_name, contact_map):
 
 def create_zoho_sales_order(token, so_data, contact_map, account_map, payment_terms_map, tax_map, tag_map, item_map):
     """Create a sales order in Zoho Books"""
+    creds = _get_creds()
     headers = {"Authorization": f"Zoho-oauthtoken {token}"}
-    params = {"organization_id": ORGANIZATION_ID}
+    params = {"organization_id": creds["org_id"]}
     
     # Convert Tally date format (YYYYMMDD) to Zoho format (YYYY-MM-DD)
     tally_date = so_data["date"]
@@ -848,7 +848,7 @@ def create_zoho_sales_order(token, so_data, contact_map, account_map, payment_te
     print(f"  Payload: {json.dumps(payload, indent=2)}")
     
     try:
-        res = requests.post(f"{BASE_URL}/salesorders", headers=headers, params=params, json=payload)
+        res = requests.post(f"{creds['base_url']}/salesorders", headers=headers, params=params, json=payload)
         
         # Log response
         with open("salesorder_response.log", "w") as f:
@@ -1335,7 +1335,19 @@ def parse_tally_json(json_path):
         if 'vouchernumber' not in v and 'vouchertypename' not in v: continue
         
         v_date = str(v.get('date', '')).strip()
-        v_no = str(v.get('vouchernumber', '')).strip()
+        tally_guid = str(v.get('guid', '')).strip()
+        v_no = str(v.get('vouchernumber') or v.get('voucherkey') or v.get('reference') or tally_guid or '').strip()
+        if not v_no:
+            import hashlib
+            v_no = "AUTO-" + hashlib.md5(str(v).encode('utf-8')).hexdigest()[:8]
+        if 'seen_v_no' not in locals(): seen_v_no = set()
+        original_no = v_no
+        counter = 1
+        while v_no in seen_v_no:
+            suffix = tally_guid[-4:] if tally_guid and counter == 1 else str(counter)
+            v_no = f"{original_no}_{suffix}"
+            counter += 1
+        seen_v_no.add(v_no)
         customer_name = str(v.get('partyname', '')).strip()
         narration = str(v.get('narration', '')).strip()
         reference_number = str(v.get('reference', '')).strip()

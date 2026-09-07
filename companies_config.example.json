@@ -1,0 +1,13 @@
+{
+  "think_tree": {
+    "id": "think_tree",
+    "name": "Think Tree",
+    "db_name": "Think_Tree_18-22.db",
+    "client_id": "your_client_id_here",
+    "client_secret": "your_client_secret_here",
+    "refresh_token": "your_refresh_token_here",
+    "org_id": "your_org_id_here",
+    "zoho_dc": "in",
+    "tally_company": "Think Tree"
+  }
+}
