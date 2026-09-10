@@ -728,19 +728,48 @@ def create_zoho_journal_from_credit_note(credit_note_data, account_map, contact_
     line_items = []
 
     # Party line (Credit)
+    ref_inv = str(credit_note_data.get("reference_number") or "").strip()
+    ledgers = credit_note_data.get("ledger_entries") or []
+    if isinstance(ledgers, str):
+        try: ledgers = json.loads(ledgers)
+        except: ledgers = []
+
+    if not ref_inv:
+        for l in ledgers:
+            for b in l.get("bill_allocations", []):
+                if b.get("type") == "Agst Ref" and b.get("name"):
+                    ref_inv = str(b.get("name")).strip()
+                    break
+            if ref_inv: break
+
+    if not ref_inv:
+        for l in ledgers:
+            for b in l.get("bill_allocations", []):
+                if b.get("name"):
+                    ref_inv = str(b.get("name")).strip()
+                    break
+            if ref_inv: break
+
+    fy = credit_note_data.get("financial_year", "")
+    if ref_inv:
+        clean_ref = ref_inv.replace("GST-", "").replace("gst-", "").strip()
+        if "/" in clean_ref:
+            customer_desc = f"Credit Note Agst Ref- CN/{clean_ref}"
+        else:
+            customer_desc = f"Credit Note Agst Ref- CN/{clean_ref}/{fy}" if fy else f"Credit Note Agst Ref- CN/{clean_ref}"
+    else:
+        vnum = str(credit_note_data.get("voucher_number", "")).strip()
+        customer_desc = f"Credit Note Agst Ref- CN/{vnum}/{fy}" if (vnum and fy) else f"Credit Note {cn_no}"
+
     line_items.append({
         "account_id": ar_account_id,
         "customer_id": customer_id,
         "debit_or_credit": "credit",
         "amount": total_amount,
-        "description": f"Credit Note {cn_no} - {party_name}"
+        "description": customer_desc
     })
 
     # Debit lines (Revenue/Expense + Taxes)
-    ledgers = credit_note_data.get("ledger_entries") or []
-    if isinstance(ledgers, str):
-        try: ledgers = json.loads(ledgers)
-        except: ledgers = []
 
     debit_sum = 0.0
     for l in ledgers:
