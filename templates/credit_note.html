@@ -208,14 +208,20 @@
             <div class="p-3 d-flex align-items-center flex-wrap gap-3">
                 <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
                 <span class="fw-semibold">Sync to Zoho Books</span>
-                <div class="d-flex gap-2 ms-auto flex-wrap">
-                    <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success" disabled>
+                <div class="d-flex gap-2 ms-auto flex-wrap align-items-center">
+                    <button onclick="markSelectedSynced('synced')" id="markSyncedBtn" class="btn btn-outline-success btn-sm fw-semibold" disabled title="Mark selected credit notes as Synced (Manual) in DB">
+                        <i class="bi bi-check-circle-fill me-1"></i> Mark as Synced (Manual)
+                    </button>
+                    <button onclick="markSelectedSynced('pending')" id="markPendingBtn" class="btn btn-outline-secondary btn-sm fw-semibold" disabled title="Mark selected credit notes as Pending in DB">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i> Mark as Pending
+                    </button>
+                    <button onclick="insertSelected()" id="insertSelectedBtn" class="btn btn-success btn-sm" disabled>
                         <i class="bi bi-cloud-upload me-1"></i> Sync Selected
                     </button>
-                    <button onclick="syncFilteredMonth()" id="syncMonthBtn" class="btn btn-outline-success">
+                    <button onclick="syncFilteredMonth()" id="syncMonthBtn" class="btn btn-outline-success btn-sm">
                         <i class="bi bi-calendar2-check me-1"></i> Sync Filtered Range
                     </button>
-                    <button onclick="syncZoho()" id="syncBtn" class="btn btn-dark">
+                    <button onclick="syncZoho()" id="syncBtn" class="btn btn-dark btn-sm">
                         <i class="bi bi-arrow-repeat me-1"></i> Sync All
                     </button>
                 </div>
@@ -223,12 +229,20 @@
         </div>
 
         <!-- SELECTION STATUS BAR -->
-        <div id="selectionBar" class="alert alert-success d-flex align-items-center justify-content-between py-2 px-3 mb-3" style="display:none; border-radius:10px;">
-            <span><i class="bi bi-check2-square me-2"></i><strong id="selectedCount">0</strong> credit note(s) selected</span>
-            <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-success" onclick="insertSelected()"><i class="bi bi-cloud-upload me-1"></i> Sync Selected</button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="selectAllVisible(true)">Select All</button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="selectAllVisible(false)">Clear</button>
+        <div id="selectionBar" class="alert alert-primary d-flex align-items-center justify-content-between py-2 px-3 mb-3 shadow-sm border" style="display:none; border-radius:10px;">
+            <span><i class="bi bi-check2-square me-2 text-primary fs-5"></i><strong id="selectedCount">0</strong> credit note(s) selected</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button class="btn btn-sm btn-success fw-semibold" onclick="markSelectedSynced('synced')" title="Mark selected credit notes as Synced in Database">
+                    <i class="bi bi-check-circle-fill me-1"></i> Mark as Synced (Manual)
+                </button>
+                <button class="btn btn-sm btn-outline-secondary fw-semibold" onclick="markSelectedSynced('pending')" title="Mark selected credit notes as Pending in Database">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> Mark as Pending
+                </button>
+                <button class="btn btn-sm btn-primary fw-semibold" onclick="insertSelected()" title="Sync selected to Zoho via API">
+                    <i class="bi bi-cloud-upload me-1"></i> Sync to Zoho API
+                </button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(true)">Select All Visible</button>
+                <button class="btn btn-sm btn-outline-dark" onclick="selectAllVisible(false)">Clear</button>
             </div>
         </div>
 
@@ -241,9 +255,23 @@
         <div class="content-card">
             <!-- Table toolbar -->
             <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div class="input-group" style="max-width:280px;">
-                    <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
-                    <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search credit note # or account..." onkeyup="applyFilters()">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="input-group" style="max-width:280px;">
+                        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                        <input type="text" id="searchInput" class="form-control border-start-0 ps-0" placeholder="Search credit note #, party, narration..." onkeyup="applyFilters()">
+                    </div>
+                    <div class="d-flex align-items-center gap-1">
+                        <span class="text-muted small fw-bold ms-2"><i class="bi bi-funnel me-1"></i>Sync Status:</span>
+                        <select id="zohoStatusFilter" class="form-select form-select-sm" style="width:145px;" onchange="applyFilters()">
+                            <option value="ALL">All Statuses</option>
+                            <option value="SYNCED">✓ Synced</option>
+                            <option value="PENDING">⏳ Pending</option>
+                            <option value="FAILED">❌ Failed</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary ms-2" onclick="loadFromDb()" title="Reload credit notes from Database">
+                        <i class="bi bi-arrow-clockwise me-1"></i> Refresh DB
+                    </button>
                 </div>
                 <div id="filterStatus" class="text-muted small fw-semibold"></div>
             </div>
@@ -351,6 +379,10 @@
 
         // Load DB credit notes on startup
         document.addEventListener('DOMContentLoaded', async () => {
+            await loadFromDb();
+        });
+
+        async function loadFromDb() {
             try {
                 const res = await fetch('/api/db/credit_notes');
                 if (res.ok) {
@@ -364,7 +396,7 @@
             } catch (err) {
                 console.warn('DB load failed:', err);
             }
-        });
+        }
 
         function getNormalizedDate(d) {
             if (!d) return '';
@@ -513,6 +545,7 @@
             const toDateStr = getNormalizedDate(document.getElementById('toDate').value);
             const limitInput = document.getElementById('limitInput').value;
             const limitVal = limitInput ? parseInt(limitInput) : null;
+            const statusFilter = document.getElementById('zohoStatusFilter') ? document.getElementById('zohoStatusFilter').value : 'ALL';
 
             let filtered = allCreditNotes.filter(c => {
                 let match = true;
@@ -525,6 +558,14 @@
                 } else {
                     if (fromDateStr && cnDate && cnDate < fromDateStr) match = false;
                     if (toDateStr && cnDate && cnDate > toDateStr) match = false;
+                }
+
+                if (match && statusFilter !== 'ALL') {
+                    const isSynced = (c.zoho_status === 'synced' || Boolean(c.zoho_journal_id));
+                    const isFailed = (c.zoho_status === 'failed' || Boolean(c.zoho_error));
+                    if (statusFilter === 'SYNCED' && !isSynced) match = false;
+                    else if (statusFilter === 'PENDING' && isSynced) match = false;
+                    else if (statusFilter === 'FAILED' && !isFailed) match = false;
                 }
 
                 if (match && q) {
@@ -593,9 +634,7 @@
                     alert('Import Error: ' + data.error);
                 } else {
                     alert(`Success: ${data.message || 'Imported ' + data.count + ' credit notes!'}`);
-                    allCreditNotes = data.credit_notes || [];
-                    buildMonthPills();
-                    quickMonth('ALL');
+                    await loadFromDb();
                 }
             } catch (err) {
                 alert('Failed to import DayBook.xml: ' + err.message);
@@ -626,9 +665,7 @@
                 if (data.error) {
                     alert('Error: ' + data.error);
                 } else {
-                    allCreditNotes = data.credit_notes || [];
-                    buildMonthPills();
-                    quickMonth('ALL');
+                    await loadFromDb();
                     alert(`Successfully imported ${allCreditNotes.length} credit notes!`);
                 }
             } catch (error) {
@@ -769,6 +806,7 @@
                 const realIdx = allCreditNotes.indexOf(c);
                 const amt = parseFloat(c.amount) || 0;
                 const taxAmt = parseFloat(c.tax_amount) || 0;
+                const cnNo = c.credit_note_number || '';
 
                 const isSynced = (c.zoho_status === 'synced' || Boolean(c.zoho_journal_id));
                 const isFailed = (c.zoho_status === 'failed' || Boolean(c.zoho_error));
@@ -776,11 +814,11 @@
                 let statusBadge = '';
                 if (isSynced) {
                     const jid = c.zoho_journal_id || '';
-                    statusBadge = `<span class="badge bg-success-subtle text-success border border-success fw-bold" title="Zoho Journal ID: ${jid}"><i class="bi bi-check-circle-fill me-1"></i>Synced</span>`;
+                    statusBadge = `<span class="badge bg-success-subtle text-success border border-success fw-bold" style="cursor:pointer;" onclick="event.stopPropagation(); toggleSingleStatus('${cnNo}', 'synced')" title="Synced (Zoho ID: ${jid}). Click to toggle to Pending"><i class="bi bi-check-circle-fill me-1"></i>Synced</span>`;
                 } else if (isFailed) {
-                    statusBadge = `<span class="badge bg-danger-subtle text-danger border border-danger fw-bold" title="${c.zoho_error || 'Failed'}"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>`;
+                    statusBadge = `<span class="badge bg-danger-subtle text-danger border border-danger fw-bold" style="cursor:pointer;" onclick="event.stopPropagation(); toggleSingleStatus('${cnNo}', 'failed')" title="${c.zoho_error || 'Failed'}. Click to mark as Synced (Manual)"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>`;
                 } else {
-                    statusBadge = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning fw-semibold"><i class="bi bi-clock me-1"></i>Pending</span>`;
+                    statusBadge = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning fw-semibold" style="cursor:pointer;" onclick="event.stopPropagation(); toggleSingleStatus('${cnNo}', 'pending')" title="Pending. Click to mark as Synced (Manual)"><i class="bi bi-clock me-1"></i>Pending</span>`;
                 }
 
                 return `
@@ -814,6 +852,8 @@
             const all     = document.querySelectorAll('.cn-chk');
             const bar     = document.getElementById('selectionBar');
             const btn     = document.getElementById('insertSelectedBtn');
+            const markSyncedBtn = document.getElementById('markSyncedBtn');
+            const markPendingBtn = document.getElementById('markPendingBtn');
             const allChk  = document.getElementById('selectAllChk');
 
             if (bar) bar.style.display = count > 0 ? 'flex' : 'none';
@@ -827,9 +867,78 @@
                     : '<i class="bi bi-cloud-upload me-1"></i> Sync Selected';
             }
 
+            if (markSyncedBtn) markSyncedBtn.disabled = count === 0;
+            if (markPendingBtn) markPendingBtn.disabled = count === 0;
+
             if (allChk) {
                 allChk.checked       = all.length > 0 && count === all.length;
                 allChk.indeterminate = count > 0 && count < all.length;
+            }
+        }
+
+        async function markSelectedSynced(status) {
+            const checked = document.querySelectorAll('.cn-chk:checked');
+            if (checked.length === 0) {
+                alert("Please select at least one credit note.");
+                return;
+            }
+
+            const cnNumbers = Array.from(checked).map(chk => {
+                const idx = parseInt(chk.dataset.idx);
+                return allCreditNotes[idx]?.credit_note_number;
+            }).filter(Boolean);
+
+            if (cnNumbers.length === 0) return;
+
+            try {
+                const res = await fetch('/api/credit_note/mark_synced', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ credit_note_numbers: cnNumbers, status: status })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    cnNumbers.forEach(num => {
+                        const found = allCreditNotes.find(c => c.credit_note_number === num);
+                        if (found) {
+                            found.zoho_status = status;
+                            found.zoho_journal_id = status === 'synced' ? (found.zoho_journal_id || 'MANUALLY_SYNCED') : null;
+                            found.zoho_error = null;
+                        }
+                    });
+                    applyFilters();
+                    selectAllVisible(false);
+                    alert(data.message || `Successfully marked ${cnNumbers.length} credit note(s) as ${status.toUpperCase()}!`);
+                } else {
+                    alert('Error: ' + (data.message || data.error));
+                }
+            } catch (e) {
+                alert('Failed to update status: ' + e.message);
+            }
+        }
+
+        async function toggleSingleStatus(cnNo, currentStatus) {
+            const newStatus = (currentStatus === 'synced') ? 'pending' : 'synced';
+            try {
+                const res = await fetch('/api/credit_note/mark_synced', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ credit_note_numbers: [cnNo], status: newStatus })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    const found = allCreditNotes.find(c => c.credit_note_number === cnNo);
+                    if (found) {
+                        found.zoho_status = newStatus;
+                        found.zoho_journal_id = newStatus === 'synced' ? (found.zoho_journal_id || 'MANUALLY_SYNCED') : null;
+                        found.zoho_error = null;
+                    }
+                    applyFilters();
+                } else {
+                    alert('Error: ' + (data.message || data.error));
+                }
+            } catch (e) {
+                alert('Failed to update status: ' + e.message);
             }
         }
 

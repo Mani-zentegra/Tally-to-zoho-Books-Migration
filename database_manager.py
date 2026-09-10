@@ -2329,6 +2329,12 @@ def bulk_save_credit_notes(credit_notes_data):
         return
     conn = get_db_connection(write=True)
     cursor = conn.cursor()
+    # Ensure all required keys exist in dictionary to avoid binding errors
+    for d in credit_notes_data:
+        d.setdefault("zoho_journal_id", None)
+        d.setdefault("zoho_status", "pending")
+        d.setdefault("zoho_error", None)
+
     cursor.executemany('''
         INSERT INTO credit_notes (
             credit_note_number, voucher_number, voucher_type, date, financial_year,
@@ -2363,9 +2369,9 @@ def bulk_save_credit_notes(credit_notes_data):
             cost_center_allocations = excluded.cost_center_allocations,
             tally_guid = excluded.tally_guid,
             updated_at = excluded.updated_at,
-            zoho_journal_id = COALESCE(excluded.zoho_journal_id, credit_notes.zoho_journal_id),
-            zoho_status = COALESCE(excluded.zoho_status, credit_notes.zoho_status),
-            zoho_error = COALESCE(excluded.zoho_error, credit_notes.zoho_error)
+            zoho_journal_id = COALESCE(credit_notes.zoho_journal_id, excluded.zoho_journal_id),
+            zoho_status = COALESCE(credit_notes.zoho_status, excluded.zoho_status, 'pending'),
+            zoho_error = COALESCE(credit_notes.zoho_error, excluded.zoho_error)
     ''', credit_notes_data)
     conn.commit()
 
@@ -2380,6 +2386,40 @@ def update_credit_note_sync_status(credit_note_number, zoho_journal_id, status='
         WHERE credit_note_number = ?
     ''', (zoho_journal_id, status, error, now, credit_note_number))
     conn.commit()
+
+def mark_credit_notes_synced(credit_note_numbers, status='synced'):
+    """Manual tick/sync function to mark credit notes as Synced or Pending in SQLite DB."""
+    if not credit_note_numbers:
+        return 0
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    now = datetime.now().isoformat()
+    status = str(status).lower()
+    zoho_id = "MANUALLY_SYNCED" if status == "synced" else None
+
+    updated_count = 0
+    for cn_no in credit_note_numbers:
+        if status == "synced":
+            cursor.execute('''
+                UPDATE credit_notes
+                SET zoho_journal_id = COALESCE(zoho_journal_id, ?),
+                    zoho_status = ?,
+                    zoho_error = NULL,
+                    updated_at = ?
+                WHERE credit_note_number = ?
+            ''', (zoho_id, status, now, str(cn_no)))
+        else:
+            cursor.execute('''
+                UPDATE credit_notes
+                SET zoho_journal_id = NULL,
+                    zoho_status = ?,
+                    zoho_error = NULL,
+                    updated_at = ?
+                WHERE credit_note_number = ?
+            ''', (status, now, str(cn_no)))
+        updated_count += cursor.rowcount
+    conn.commit()
+    return updated_count
 
 def get_all_credit_notes():
     conn = get_db_connection()

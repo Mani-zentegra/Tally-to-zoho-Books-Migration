@@ -6933,19 +6933,41 @@ def api_upload_credit_note():
                     "tally_guid": credit_note.get("tally_guid", ""),
                     "company_name": credit_note.get("company_name", ""),
                     "created_at": now_iso,
-                    "updated_at": now_iso
+                    "updated_at": now_iso,
+                    "zoho_journal_id": None,
+                    "zoho_status": None,
+                    "zoho_error": None
                 }
                 db_data_list.append(db_data)
                 
             try:
                 database_manager.bulk_save_credit_notes(db_data_list)
-            except AttributeError:
-                pass
+            except Exception as e:
+                print(f"Error bulk saving uploaded credit notes: {e}")
                 
         os.unlink(temp_path)
+
+        # Return updated records with persistent statuses from DB
+        credit_notes = []
+        if database_manager:
+            c_rows = database_manager.get_all_credit_notes()
+            for r in c_rows:
+                d = dict(r)
+                if isinstance(d.get('ledger_entries'), str):
+                    try: d['ledger_entries'] = json.loads(d['ledger_entries'])
+                    except: d['ledger_entries'] = []
+                if isinstance(d.get('line_items'), str):
+                    try: d['line_items'] = json.loads(d['line_items'])
+                    except: d['line_items'] = []
+                if isinstance(d.get('cost_center_allocations'), str):
+                    try: d['cost_center_allocations'] = json.loads(d['cost_center_allocations'])
+                    except: d['cost_center_allocations'] = []
+                credit_notes.append(d)
+        else:
+            credit_notes = parsed_credit_notes
         
-        total_amount = sum(float(c.get("amount", 0)) for c in parsed_credit_notes)
-        return jsonify({"credit_notes": parsed_credit_notes, "total_amount": total_amount, "count": len(parsed_credit_notes)})
+        total_amount = sum(float(c.get("amount", 0) or 0) for c in credit_notes)
+        return jsonify({"credit_notes": credit_notes, "total_amount": total_amount, "count": len(credit_notes)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -6988,19 +7010,66 @@ def api_import_daybook_credit_note():
                     "tally_guid": credit_note.get("tally_guid", ""),
                     "company_name": credit_note.get("company_name", ""),
                     "created_at": now_iso,
-                    "updated_at": now_iso
+                    "updated_at": now_iso,
+                    "zoho_journal_id": None,
+                    "zoho_status": None,
+                    "zoho_error": None
                 }
                 db_data_list.append(db_data)
             database_manager.bulk_save_credit_notes(db_data_list)
 
-        total_amount = sum(float(c.get("amount", 0)) for c in parsed_credit_notes)
+        # Return updated records with persistent statuses from DB
+        credit_notes = []
+        if database_manager:
+            c_rows = database_manager.get_all_credit_notes()
+            for r in c_rows:
+                d = dict(r)
+                if isinstance(d.get('ledger_entries'), str):
+                    try: d['ledger_entries'] = json.loads(d['ledger_entries'])
+                    except: d['ledger_entries'] = []
+                if isinstance(d.get('line_items'), str):
+                    try: d['line_items'] = json.loads(d['line_items'])
+                    except: d['line_items'] = []
+                if isinstance(d.get('cost_center_allocations'), str):
+                    try: d['cost_center_allocations'] = json.loads(d['cost_center_allocations'])
+                    except: d['cost_center_allocations'] = []
+                credit_notes.append(d)
+        else:
+            credit_notes = parsed_credit_notes
+
+        total_amount = sum(float(c.get("amount", 0) or 0) for c in credit_notes)
         return jsonify({
             "status": "success",
             "message": f"Successfully imported {len(parsed_credit_notes)} credit notes from DayBook.xml",
-            "credit_notes": parsed_credit_notes,
-            "count": len(parsed_credit_notes),
+            "credit_notes": credit_notes,
+            "count": len(credit_notes),
             "total_amount": total_amount
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/credit_note/mark_synced', methods=['POST'])
+def api_credit_note_mark_synced():
+    """Manual tick/sync endpoint to mark credit notes as Synced or Pending in SQLite DB."""
+    try:
+        data = request.json or {}
+        credit_note_numbers = data.get("credit_note_numbers", [])
+        status = str(data.get("status", "synced")).lower()
+        
+        if not credit_note_numbers:
+            return jsonify({"error": "No credit notes provided to update."}), 400
+            
+        if database_manager:
+            database_manager.init_db()
+            updated_count = database_manager.mark_credit_notes_synced(credit_note_numbers, status=status)
+            return jsonify({
+                "status": "success",
+                "message": f"Successfully marked {updated_count} credit note(s) as {status.capitalize()}.",
+                "updated_count": updated_count,
+                "target_status": status
+            })
+            
+        return jsonify({"error": "Database manager not available."}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
