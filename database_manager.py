@@ -879,7 +879,12 @@ def init_db(db_name=None):
 
             -- Timestamps
             created_at        TEXT,
-            updated_at        TEXT
+            updated_at        TEXT,
+
+            -- Zoho Sync Details
+            zoho_journal_id   TEXT,
+            zoho_status       TEXT DEFAULT 'pending',
+            zoho_error        TEXT
         )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_credit_note_date ON credit_notes(date)')
@@ -896,7 +901,10 @@ def init_db(db_name=None):
             ("reference_number", "TEXT"),
             ("reference_date", "TEXT"),
             ("party_gstin", "TEXT"),
-            ("place_of_supply", "TEXT")
+            ("place_of_supply", "TEXT"),
+            ("zoho_journal_id", "TEXT"),
+            ("zoho_status", "TEXT DEFAULT 'pending'"),
+            ("zoho_error", "TEXT")
         ]:
             if cname not in cn_cols:
                 cursor.execute(f"ALTER TABLE credit_notes ADD COLUMN {cname} {ctype}")
@@ -2327,13 +2335,13 @@ def bulk_save_credit_notes(credit_notes_data):
             party_name, from_account, to_account, amount, tax_amount, taxable_amount,
             narration, reference_number, reference_date, party_gstin, place_of_supply,
             ledger_entries, line_items, cost_center_allocations, tally_guid, company_name,
-            created_at, updated_at
+            created_at, updated_at, zoho_journal_id, zoho_status, zoho_error
         ) VALUES (
             :credit_note_number, :voucher_number, :voucher_type, :date, :financial_year,
             :party_name, :from_account, :to_account, :amount, :tax_amount, :taxable_amount,
             :narration, :reference_number, :reference_date, :party_gstin, :place_of_supply,
             :ledger_entries, :line_items, :cost_center_allocations, :tally_guid, :company_name,
-            :created_at, :updated_at
+            :created_at, :updated_at, :zoho_journal_id, :zoho_status, :zoho_error
         ) ON CONFLICT(credit_note_number) DO UPDATE SET
             voucher_number = excluded.voucher_number,
             voucher_type = excluded.voucher_type,
@@ -2354,8 +2362,23 @@ def bulk_save_credit_notes(credit_notes_data):
             line_items = excluded.line_items,
             cost_center_allocations = excluded.cost_center_allocations,
             tally_guid = excluded.tally_guid,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            zoho_journal_id = COALESCE(excluded.zoho_journal_id, credit_notes.zoho_journal_id),
+            zoho_status = COALESCE(excluded.zoho_status, credit_notes.zoho_status),
+            zoho_error = COALESCE(excluded.zoho_error, credit_notes.zoho_error)
     ''', credit_notes_data)
+    conn.commit()
+
+def update_credit_note_sync_status(credit_note_number, zoho_journal_id, status='synced', error=None):
+    """Update Zoho sync status and journal ID for a credit note"""
+    conn = get_db_connection(write=True)
+    cursor = conn.cursor()
+    now = datetime.now().isoformat()
+    cursor.execute('''
+        UPDATE credit_notes
+        SET zoho_journal_id = ?, zoho_status = ?, zoho_error = ?, updated_at = ?
+        WHERE credit_note_number = ?
+    ''', (zoho_journal_id, status, error, now, credit_note_number))
     conn.commit()
 
 def get_all_credit_notes():
@@ -2363,6 +2386,7 @@ def get_all_credit_notes():
     rows = conn.execute('SELECT * FROM credit_notes ORDER BY date DESC').fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
 
 # ---------------------------------------------------
 # DEBIT NOTES FUNCTIONS

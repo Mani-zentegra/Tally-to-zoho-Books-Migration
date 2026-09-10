@@ -170,22 +170,31 @@
 
                 <!-- KPI Cards -->
                 <div class="row g-3">
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <div class="kpi-card" style="border-color:#5e35b1">
-                            <div class="kpi-label">Total Credit Note Vouchers</div>
+                            <div class="kpi-label">Total Credit Notes</div>
                             <div class="kpi-value text-dark" id="total-credit-notes">0</div>
                         </div>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <div class="kpi-card" style="border-color:#e53935">
-                            <div class="kpi-label">Total Amount (Credit)</div>
+                            <div class="kpi-label">Total Amount (₹)</div>
                             <div class="kpi-value text-danger" id="total-amount">₹0</div>
+                            <div class="small text-muted" id="total-tax-amount-sub">Tax: ₹0</div>
                         </div>
                     </div>
-                    <div class="col-md-4">
-                        <div class="kpi-card" style="border-color:#0288d1">
-                            <div class="kpi-label">Total Tax Amount (GST)</div>
-                            <div class="kpi-value text-primary" id="total-tax-amount">₹0</div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#2e7d32">
+                            <div class="kpi-label">Synced to Zoho</div>
+                            <div class="kpi-value text-success" id="synced-count">0</div>
+                            <div class="small text-muted">Manual Journals</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#f59e0b">
+                            <div class="kpi-label">Pending Sync</div>
+                            <div class="kpi-value text-warning-emphasis" id="pending-count">0</div>
+                            <div class="small text-muted">Ready to push</div>
                         </div>
                     </div>
                 </div>
@@ -255,12 +264,13 @@
                             <th>Particulars / Account (Dr)</th>
                             <th class="text-end">Tax (GST)</th>
                             <th class="text-end">Amount (₹)</th>
+                            <th class="text-center">Zoho Status</th>
                             <th class="text-center">Action</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody">
                         <tr>
-                            <td colspan="10" class="text-center py-5 text-muted">
+                            <td colspan="11" class="text-center py-5 text-muted">
                                 <i class="bi bi-arrow-left-right fs-1 mb-2"></i><br>
                                 Click "Import DayBook.xml" or select a filter
                             </td>
@@ -543,12 +553,19 @@
             // Recalculate KPIs dynamically for filtered set
             const totalAmount = filtered.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
             const totalTaxAmount = filtered.reduce((s, c) => s + (parseFloat(c.tax_amount) || 0), 0);
+            const syncedCount = filtered.filter(c => c.zoho_status === 'synced' || c.zoho_journal_id).length;
+            const pendingCount = filtered.length - syncedCount;
+
             document.getElementById('total-credit-notes').innerText = filtered.length.toLocaleString();
             document.getElementById('total-amount').innerText = '₹' + totalAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            const taxEl = document.getElementById('total-tax-amount');
-            if (taxEl) {
-                taxEl.innerText = '₹' + totalTaxAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const taxSubEl = document.getElementById('total-tax-amount-sub');
+            if (taxSubEl) {
+                taxSubEl.innerText = 'GST Tax: ₹' + totalTaxAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
             }
+            const syncedEl = document.getElementById('synced-count');
+            if (syncedEl) syncedEl.innerText = syncedCount.toLocaleString();
+            const pendingEl = document.getElementById('pending-count');
+            if (pendingEl) pendingEl.innerText = pendingCount.toLocaleString();
 
             const status = document.getElementById('filterStatus');
             if (status) {
@@ -657,7 +674,7 @@
         }
 
         async function syncZoho() {
-            if (!confirm("This will sync all credit notes to Zoho Books. Continue?")) return;
+            if (!confirm("This will sync all credit notes to Zoho Books as Manual Journals. Continue?")) return;
             await _pushCreditNotesToZoho(allCreditNotes, 'syncBtn');
         }
 
@@ -667,7 +684,7 @@
                 return;
             }
             const label = activeMonth ? (getMonthName(activeMonth) || activeMonth) : 'current filter';
-            if (!confirm(`Sync ${currentFilteredCreditNotes.length} credit note(s) for ${label} to Zoho Books?`)) return;
+            if (!confirm(`Sync ${currentFilteredCreditNotes.length} credit note(s) for ${label} to Zoho Books as Manual Journals?`)) return;
 
             await _pushCreditNotesToZoho(currentFilteredCreditNotes, 'syncMonthBtn');
         }
@@ -680,7 +697,7 @@
             }
 
             const selectedNotes = Array.from(checked).map(chk => allCreditNotes[parseInt(chk.dataset.idx)]);
-            if (!confirm(`Sync ${selectedNotes.length} selected credit note(s) to Zoho Books?`)) return;
+            if (!confirm(`Sync ${selectedNotes.length} selected credit note(s) to Zoho Books as Manual Journals?`)) return;
 
             await _pushCreditNotesToZoho(selectedNotes, 'insertSelectedBtn');
         }
@@ -690,7 +707,7 @@
             const originalHTML = btn ? btn.innerHTML : '';
             if (btn) {
                 btn.disabled = true;
-                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing...';
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Syncing Manual Journals...';
             }
 
             try {
@@ -702,21 +719,34 @@
                 const data = await res.json();
 
                 if (data.status === 'success') {
-                    let msg = 'Zoho Sync Complete!\n\n';
-                    msg += `Total: ${data.total} | Success: ${data.success} | Failed: ${data.failed}\n\n`;
-                    if (data.failed > 0 && data.errors) {
-                        msg += 'Failed:\n';
-                        data.errors.forEach((e, i) => {
-                            msg += `${i+1}. #${e.credit_note_number} - ${e.error}\n`;
+                    let msg = 'Zoho Journal Sync Complete!\n\n';
+                    msg += `Total Processed: ${data.total}\n`;
+                    msg += `Successfully Synced: ${data.success} (Pre-synced: ${data.already_synced || 0})\n`;
+                    msg += `Failed: ${data.failed}\n\n`;
+                    if (data.failed > 0 && data.errors && data.errors.length) {
+                        msg += 'Failed Items:\n';
+                        data.errors.slice(0, 10).forEach((e, i) => {
+                            msg += `${i+1}. ${e.credit_note_number} - ${e.error}\n`;
                         });
+                        if (data.errors.length > 10) {
+                            msg += `...and ${data.errors.length - 10} more.\n`;
+                        }
                     }
                     alert(msg);
+
+                    // Reload fresh data from DB to update status badges
+                    const dbRes = await fetch('/api/db/credit_notes');
+                    if (dbRes.ok) {
+                        const dbData = await dbRes.json();
+                        allCreditNotes = dbData.credit_notes || [];
+                        applyFilters();
+                    }
                     selectAllVisible(false);
                 } else {
-                    alert('Sync Error: ' + data.message);
+                    alert('Sync Error: ' + (data.message || data.error));
                 }
             } catch (err) {
-                alert('Connection Error during Sync');
+                alert('Connection Error during Sync: ' + err.message);
             } finally {
                 if (btn) {
                     btn.disabled = false;
@@ -730,7 +760,7 @@
             currentFilteredCreditNotes = credit_notes;
             const tbody = document.getElementById('tableBody');
             if (!credit_notes || credit_notes.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4 text-muted">No Credit Notes Found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" class="text-center py-4 text-muted">No Credit Notes Found</td></tr>';
                 updateSelectionUI();
                 return;
             }
@@ -739,6 +769,20 @@
                 const realIdx = allCreditNotes.indexOf(c);
                 const amt = parseFloat(c.amount) || 0;
                 const taxAmt = parseFloat(c.tax_amount) || 0;
+
+                const isSynced = (c.zoho_status === 'synced' || Boolean(c.zoho_journal_id));
+                const isFailed = (c.zoho_status === 'failed' || Boolean(c.zoho_error));
+
+                let statusBadge = '';
+                if (isSynced) {
+                    const jid = c.zoho_journal_id || '';
+                    statusBadge = `<span class="badge bg-success-subtle text-success border border-success fw-bold" title="Zoho Journal ID: ${jid}"><i class="bi bi-check-circle-fill me-1"></i>Synced</span>`;
+                } else if (isFailed) {
+                    statusBadge = `<span class="badge bg-danger-subtle text-danger border border-danger fw-bold" title="${c.zoho_error || 'Failed'}"><i class="bi bi-x-circle-fill me-1"></i>Failed</span>`;
+                } else {
+                    statusBadge = `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning fw-semibold"><i class="bi bi-clock me-1"></i>Pending</span>`;
+                }
+
                 return `
                 <tr style="cursor:pointer" onclick="showDetails(${realIdx})">
                     <td onclick="event.stopPropagation()">
@@ -753,6 +797,7 @@
                     <td class="text-success">${c.to_account || '-'}</td>
                     <td class="text-end text-muted">₹${taxAmt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
                     <td class="text-end fw-bold text-dark">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                    <td class="text-center">${statusBadge}</td>
                     <td class="text-center">
                         <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showDetails(${realIdx})">
                             <i class="bi bi-eye"></i> View
@@ -843,6 +888,7 @@
                                 <span class="badge bg-primary fs-6 me-2">Credit Note</span>
                                 <span class="fw-bold fs-5">No. ${c.voucher_number || c.credit_note_number}</span>
                                 <span class="badge bg-dark-subtle text-dark border ms-2 font-monospace">${c.credit_note_number}</span>
+                                ${c.zoho_journal_id ? `<span class="badge bg-success ms-2"><i class="bi bi-check-circle me-1"></i>Zoho Journal #${c.zoho_journal_id}</span>` : '<span class="badge bg-warning text-dark ms-2"><i class="bi bi-clock me-1"></i>Pending Zoho Sync</span>'}
                             </div>
                             <div class="text-end">
                                 <span class="fw-bold text-dark fs-6">${formatDisplayDate(c.date)}</span>
