@@ -149,7 +149,7 @@ Before finalizing, verify:
 - ✅ Validate prompt completeness before presenting (quality checks in Step 4.6)
 
 
-### **Example 2: Complex Clear Prompt → RODES + Chain of Thought (No Clarification)**
+### Example 2: Complex Clear Prompt → RODES + Chain of Thought (No Clarification)**
 
 **User Input:**
 ```
