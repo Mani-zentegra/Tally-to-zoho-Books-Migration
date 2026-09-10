@@ -845,14 +845,23 @@ def init_db(db_name=None):
 
             -- Voucher identity
             credit_note_number TEXT UNIQUE,
+            voucher_number    TEXT,
             voucher_type      TEXT,
             date              TEXT,
+            financial_year    TEXT,
 
-            -- Account details
+            -- Account & Party details
+            party_name        TEXT,
             from_account      TEXT,
             to_account        TEXT,
             amount            REAL DEFAULT 0,
+            tax_amount        REAL DEFAULT 0,
+            taxable_amount    REAL DEFAULT 0,
             narration         TEXT,
+            reference_number  TEXT,
+            reference_date    TEXT,
+            party_gstin       TEXT,
+            place_of_supply   TEXT,
 
             -- Ledger entries JSON (snapshot of all entries)
             ledger_entries    TEXT,
@@ -874,6 +883,25 @@ def init_db(db_name=None):
         )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_credit_note_date ON credit_notes(date)')
+
+    # Automatic migration for credit_notes columns if table already existed
+    try:
+        cn_cols = [col[1] for col in cursor.execute("PRAGMA table_info(credit_notes)").fetchall()]
+        for cname, ctype in [
+            ("voucher_number", "TEXT"),
+            ("financial_year", "TEXT"),
+            ("party_name", "TEXT"),
+            ("tax_amount", "REAL DEFAULT 0"),
+            ("taxable_amount", "REAL DEFAULT 0"),
+            ("reference_number", "TEXT"),
+            ("reference_date", "TEXT"),
+            ("party_gstin", "TEXT"),
+            ("place_of_supply", "TEXT")
+        ]:
+            if cname not in cn_cols:
+                cursor.execute(f"ALTER TABLE credit_notes ADD COLUMN {cname} {ctype}")
+    except Exception:
+        pass
 
     # DEBIT NOTES TABLE
     cursor.execute('''
@@ -2295,20 +2323,37 @@ def bulk_save_credit_notes(credit_notes_data):
     cursor = conn.cursor()
     cursor.executemany('''
         INSERT INTO credit_notes (
-            credit_note_number, voucher_type, date, from_account, to_account, amount,
-            narration, ledger_entries, line_items, cost_center_allocations, tally_guid, company_name, created_at, updated_at
+            credit_note_number, voucher_number, voucher_type, date, financial_year,
+            party_name, from_account, to_account, amount, tax_amount, taxable_amount,
+            narration, reference_number, reference_date, party_gstin, place_of_supply,
+            ledger_entries, line_items, cost_center_allocations, tally_guid, company_name,
+            created_at, updated_at
         ) VALUES (
-            :credit_note_number, :voucher_type, :date, :from_account, :to_account, :amount,
-            :narration, :ledger_entries, :line_items, :cost_center_allocations, :tally_guid, :company_name, :created_at, :updated_at
+            :credit_note_number, :voucher_number, :voucher_type, :date, :financial_year,
+            :party_name, :from_account, :to_account, :amount, :tax_amount, :taxable_amount,
+            :narration, :reference_number, :reference_date, :party_gstin, :place_of_supply,
+            :ledger_entries, :line_items, :cost_center_allocations, :tally_guid, :company_name,
+            :created_at, :updated_at
         ) ON CONFLICT(credit_note_number) DO UPDATE SET
+            voucher_number = excluded.voucher_number,
+            voucher_type = excluded.voucher_type,
             date = excluded.date,
+            financial_year = excluded.financial_year,
+            party_name = excluded.party_name,
             from_account = excluded.from_account,
             to_account = excluded.to_account,
             amount = excluded.amount,
+            tax_amount = excluded.tax_amount,
+            taxable_amount = excluded.taxable_amount,
             narration = excluded.narration,
+            reference_number = excluded.reference_number,
+            reference_date = excluded.reference_date,
+            party_gstin = excluded.party_gstin,
+            place_of_supply = excluded.place_of_supply,
             ledger_entries = excluded.ledger_entries,
             line_items = excluded.line_items,
             cost_center_allocations = excluded.cost_center_allocations,
+            tally_guid = excluded.tally_guid,
             updated_at = excluded.updated_at
     ''', credit_notes_data)
     conn.commit()

@@ -386,6 +386,210 @@ def parse_tally_json(json_path):
     return credit_notes
 
 
+def get_fy(d_str):
+    s = str(d_str).replace('-', '').strip()
+    if len(s) >= 6:
+        try:
+            year = int(s[:4])
+            month = int(s[4:6])
+            if month >= 4:
+                start_y = year
+                end_y = year + 1
+            else:
+                start_y = year - 1
+                end_y = year
+            return f"{str(start_y)[-2:]}-{str(end_y)[-2:]}"
+        except Exception:
+            pass
+    return "18-19"
+
+
+def parse_tally_xml(xml_path_or_content, company_name=None):
+    """Parse Tally XML export (like DayBook.xml) for Credit Note vouchers with full fidelity."""
+    if os.path.exists(xml_path_or_content):
+        content = None
+        for enc in ['utf-16', 'utf-16-le', 'utf-8-sig', 'utf-8']:
+            try:
+                with open(xml_path_or_content, 'r', encoding=enc) as f:
+                    content = f.read()
+                break
+            except Exception:
+                continue
+        if content is None:
+            raise ValueError("Could not decode XML file with supported encodings")
+    else:
+        content = xml_path_or_content
+
+    soup = BeautifulSoup(content, 'lxml-xml')
+    vouchers = soup.find_all('VOUCHER')
+    
+    credit_notes = []
+    seen_keys = set()
+    
+    for v in vouchers:
+        vtype_tag = v.find('VOUCHERTYPENAME') or v.find('VCHTYPE')
+        vtype = vtype_tag.text.strip() if vtype_tag else 'Credit Note'
+        if 'credit' not in vtype.lower() or 'note' not in vtype.lower():
+            continue
+            
+        tally_guid = v.find('GUID').text.strip() if v.find('GUID') else ''
+        raw_vnum = v.find('VOUCHERNUMBER').text.strip() if v.find('VOUCHERNUMBER') else ''
+        date_str = v.find('DATE').text.strip() if v.find('DATE') else ''
+        fy = get_fy(date_str)
+        
+        # Format voucher number with FY to ensure uniqueness across financial years
+        if raw_vnum:
+            if raw_vnum.isdigit():
+                formatted_no = f"CN/{int(raw_vnum):03d}/{fy}"
+            elif '/' in raw_vnum:
+                formatted_no = raw_vnum
+            else:
+                formatted_no = f"CN/{raw_vnum}/{fy}"
+        else:
+            import hashlib
+            formatted_no = f"CN/AUTO-{hashlib.md5(str(v).encode('utf-8')).hexdigest()[:6]}/{fy}"
+
+        final_cn_number = formatted_no
+        counter = 1
+        while final_cn_number in seen_keys:
+            final_cn_number = f"{formatted_no}_{counter}"
+            counter += 1
+        seen_keys.add(final_cn_number)
+
+        party_name = v.find('PARTYLEDGERNAME').text.strip() if v.find('PARTYLEDGERNAME') else ''
+        if not party_name and v.find('BASICBUYERNAME'):
+            party_name = v.find('BASICBUYERNAME').text.strip()
+            
+        narration = v.find('NARRATION').text.strip() if v.find('NARRATION') else ''
+        reference_no = v.find('REFERENCE').text.strip() if v.find('REFERENCE') else ''
+        reference_date = v.find('REFERENCEDATE').text.strip() if v.find('REFERENCEDATE') else ''
+        party_gstin = v.find('PARTYGSTIN').text.strip() if v.find('PARTYGSTIN') else ''
+        place_of_supply = v.find('PLACEOFSUPPLY').text.strip() if v.find('PLACEOFSUPPLY') else ''
+        if not place_of_supply and v.find('STATENAME'):
+            place_of_supply = v.find('STATENAME').text.strip()
+
+        # Parse Ledger Entries
+        ledger_entries = []
+        raw_entries = v.find_all('ALLLEDGERENTRIES.LIST') or v.find_all('LEDGERENTRIES.LIST')
+        
+        from_account = party_name
+        to_account = ''
+        total_voucher_amt = 0.0
+        tax_amount = 0.0
+        party_found_amt = 0.0
+
+        for entry in raw_entries:
+            ename = entry.find('LEDGERNAME').text.strip() if entry.find('LEDGERNAME') else ''
+            if not ename:
+                continue
+            eamt_str = entry.find('AMOUNT').text.strip() if entry.find('AMOUNT') else '0'
+            try:
+                eamt = float(eamt_str)
+            except Exception:
+                eamt = 0.0
+                
+            is_deemed_pos = entry.find('ISDEEMEDPOSITIVE').text.strip().lower() in ['yes', 'true', '1'] if entry.find('ISDEEMEDPOSITIVE') else False
+
+            bill_allocs = []
+            for ba in entry.find_all('BILLALLOCATIONS.LIST'):
+                bname = ba.find('NAME').text.strip() if ba.find('NAME') else ''
+                btype = ba.find('BILLTYPE').text.strip() if ba.find('BILLTYPE') else ''
+                bamt_str = ba.find('AMOUNT').text.strip() if ba.find('AMOUNT') else '0'
+                try:
+                    bamt = float(bamt_str)
+                except Exception:
+                    bamt = 0.0
+                if bname or bamt:
+                    bill_allocs.append({'name': bname, 'type': btype, 'amount': abs(bamt)})
+
+            # Classify entry
+            entry_type = 'ledger'
+            if party_name and ename.lower() == party_name.lower():
+                entry_type = 'party'
+                from_account = ename
+                party_found_amt = abs(eamt)
+            elif 'gst' in ename.lower() or 'tax' in ename.lower() or 'duty' in ename.lower():
+                entry_type = 'tax'
+                tax_amount += abs(eamt)
+            else:
+                entry_type = 'income_expense'
+                if not to_account:
+                    to_account = ename
+
+            ledger_entries.append({
+                'ledger_name': ename,
+                'amount': abs(eamt),
+                'raw_amount': eamt,
+                'is_deemed_positive': is_deemed_pos,
+                'type': entry_type,
+                'bill_allocations': bill_allocs
+            })
+
+        if party_found_amt > 0:
+            total_voucher_amt = party_found_amt
+        else:
+            total_voucher_amt = sum(e['amount'] for e in ledger_entries if e['type'] != 'party')
+
+        if not to_account:
+            for e in ledger_entries:
+                if e['type'] != 'party' and e['type'] != 'tax':
+                    to_account = e['ledger_name']
+                    break
+            if not to_account and ledger_entries:
+                non_party = [e for e in ledger_entries if e['ledger_name'].lower() != party_name.lower()]
+                if non_party:
+                    to_account = non_party[0]['ledger_name']
+
+        taxable_amount = max(0.0, total_voucher_amt - tax_amount)
+
+        # Parse line items if any
+        line_items = []
+        for inv in v.find_all(['ALLINVENTORYENTRIES.LIST', 'INVENTORYENTRIES.LIST']):
+            item_name = inv.find('STOCKITEMNAME').text.strip() if inv.find('STOCKITEMNAME') else ''
+            if not item_name:
+                continue
+            bqty = inv.find('BILLEDQTY').text.strip() if inv.find('BILLEDQTY') else '1'
+            rate_str = inv.find('RATE').text.strip() if inv.find('RATE') else '0'
+            amt_str = inv.find('AMOUNT').text.strip() if inv.find('AMOUNT') else '0'
+            try:
+                iamt = abs(float(amt_str))
+            except Exception:
+                iamt = 0.0
+            line_items.append({
+                'item_name': item_name,
+                'quantity': bqty,
+                'rate': rate_str,
+                'amount': iamt
+            })
+
+        credit_notes.append({
+            'credit_note_number': final_cn_number,
+            'voucher_number': raw_vnum,
+            'voucher_type': 'Credit Note',
+            'date': date_str,
+            'financial_year': fy,
+            'party_name': party_name,
+            'from_account': from_account,
+            'to_account': to_account,
+            'amount': round(total_voucher_amt, 2),
+            'tax_amount': round(tax_amount, 2),
+            'taxable_amount': round(taxable_amount, 2),
+            'narration': narration,
+            'reference_number': reference_no,
+            'reference_date': reference_date,
+            'party_gstin': party_gstin,
+            'place_of_supply': place_of_supply,
+            'ledger_entries': ledger_entries,
+            'line_items': line_items,
+            'cost_center_allocations': [],
+            'tally_guid': tally_guid,
+            'company_name': company_name or 'Think Tree Media House'
+        })
+
+    print(f" Successfully parsed {len(credit_notes)} credit_note vouchers from XML")
+    return credit_notes
+
+
 # Removed manual get_access_token in favor of ZohoConnector
 
 import difflib

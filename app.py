@@ -6893,32 +6893,47 @@ def api_upload_credit_note():
         
         import tempfile, os
         from datetime import datetime
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as temp:
+        is_xml = file.filename.lower().endswith('.xml')
+        suffix = '.xml' if is_xml else '.json'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
             file.save(temp.name)
             temp_path = temp.name
             
-        parsed_credit_notes = credit_note_module.parse_tally_json(temp_path)
+        if is_xml:
+            parsed_credit_notes = credit_note_module.parse_tally_xml(temp_path)
+        else:
+            parsed_credit_notes = credit_note_module.parse_tally_json(temp_path)
         
         # Save to SQLite
         if database_manager and parsed_credit_notes:
             database_manager.init_db()
             db_data_list = []
+            now_iso = datetime.now().isoformat()
             for credit_note in parsed_credit_notes:
                 db_data = {
                     "credit_note_number": credit_note.get("credit_note_number", ""),
+                    "voucher_number": credit_note.get("voucher_number", ""),
                     "voucher_type": credit_note.get("voucher_type", "Credit Note"),
                     "date": credit_note.get("date", ""),
+                    "financial_year": credit_note.get("financial_year", ""),
+                    "party_name": credit_note.get("party_name", ""),
                     "from_account": credit_note.get("from_account", ""),
                     "to_account": credit_note.get("to_account", ""),
                     "amount": credit_note.get("amount", 0) or 0,
+                    "tax_amount": credit_note.get("tax_amount", 0) or 0,
+                    "taxable_amount": credit_note.get("taxable_amount", 0) or 0,
                     "narration": credit_note.get("narration", ""),
+                    "reference_number": credit_note.get("reference_number", ""),
+                    "reference_date": credit_note.get("reference_date", ""),
+                    "party_gstin": credit_note.get("party_gstin", ""),
+                    "place_of_supply": credit_note.get("place_of_supply", ""),
                     "ledger_entries": json.dumps(credit_note.get("ledger_entries", [])),
                     "line_items": json.dumps(credit_note.get("line_items", [])),
                     "cost_center_allocations": json.dumps(credit_note.get("cost_center_allocations", [])),
                     "tally_guid": credit_note.get("tally_guid", ""),
-                    "company_name": "",
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
+                    "company_name": credit_note.get("company_name", ""),
+                    "created_at": now_iso,
+                    "updated_at": now_iso
                 }
                 db_data_list.append(db_data)
                 
@@ -6930,7 +6945,62 @@ def api_upload_credit_note():
         os.unlink(temp_path)
         
         total_amount = sum(float(c.get("amount", 0)) for c in parsed_credit_notes)
-        return jsonify({"credit_notes": parsed_credit_notes, "total_amount": total_amount})
+        return jsonify({"credit_notes": parsed_credit_notes, "total_amount": total_amount, "count": len(parsed_credit_notes)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/credit_note/import_daybook', methods=['POST'])
+def api_import_daybook_credit_note():
+    try:
+        import os
+        from datetime import datetime
+        req_path = request.json.get("path") if request.is_json else None
+        daybook_path = req_path or r"C:\Program Files\TallyPrimeEditLog\DayBook.xml"
+        if not os.path.exists(daybook_path):
+            return jsonify({"error": f"DayBook.xml not found at {daybook_path}"}), 404
+
+        parsed_credit_notes = credit_note_module.parse_tally_xml(daybook_path)
+        if database_manager and parsed_credit_notes:
+            database_manager.init_db()
+            db_data_list = []
+            now_iso = datetime.now().isoformat()
+            for credit_note in parsed_credit_notes:
+                db_data = {
+                    "credit_note_number": credit_note.get("credit_note_number", ""),
+                    "voucher_number": credit_note.get("voucher_number", ""),
+                    "voucher_type": credit_note.get("voucher_type", "Credit Note"),
+                    "date": credit_note.get("date", ""),
+                    "financial_year": credit_note.get("financial_year", ""),
+                    "party_name": credit_note.get("party_name", ""),
+                    "from_account": credit_note.get("from_account", ""),
+                    "to_account": credit_note.get("to_account", ""),
+                    "amount": credit_note.get("amount", 0) or 0,
+                    "tax_amount": credit_note.get("tax_amount", 0) or 0,
+                    "taxable_amount": credit_note.get("taxable_amount", 0) or 0,
+                    "narration": credit_note.get("narration", ""),
+                    "reference_number": credit_note.get("reference_number", ""),
+                    "reference_date": credit_note.get("reference_date", ""),
+                    "party_gstin": credit_note.get("party_gstin", ""),
+                    "place_of_supply": credit_note.get("place_of_supply", ""),
+                    "ledger_entries": json.dumps(credit_note.get("ledger_entries", [])),
+                    "line_items": json.dumps(credit_note.get("line_items", [])),
+                    "cost_center_allocations": json.dumps(credit_note.get("cost_center_allocations", [])),
+                    "tally_guid": credit_note.get("tally_guid", ""),
+                    "company_name": credit_note.get("company_name", ""),
+                    "created_at": now_iso,
+                    "updated_at": now_iso
+                }
+                db_data_list.append(db_data)
+            database_manager.bulk_save_credit_notes(db_data_list)
+
+        total_amount = sum(float(c.get("amount", 0)) for c in parsed_credit_notes)
+        return jsonify({
+            "status": "success",
+            "message": f"Successfully imported {len(parsed_credit_notes)} credit notes from DayBook.xml",
+            "credit_notes": parsed_credit_notes,
+            "count": len(parsed_credit_notes),
+            "total_amount": total_amount
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

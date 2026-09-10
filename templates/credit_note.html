@@ -8,6 +8,30 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
         {% include '_sidebar_styles.html' %}
     {% include '_zb_theme.html' %}
+    <style>
+        .month-pill {
+            background-color: #f1f3f5;
+            color: #495057;
+            border: 1px solid #ced4da;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 0.82rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .month-pill:hover {
+            background-color: #e9ecef;
+            border-color: #adb5bd;
+        }
+        .month-pill.active {
+            background-color: #0d6efd !important;
+            color: #ffffff !important;
+            border-color: #0d6efd !important;
+            font-weight: 600;
+        }
+    </style>
 </head>
 <body>
     {% set active_page = 'credit_note' %}
@@ -78,30 +102,35 @@
                 <div class="d-flex align-items-center gap-2 mb-3">
                     <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#5e35b1;font-size:13px;">STEP 1</span>
                     <span class="fw-semibold">Get Data</span>
-                    <span class="text-muted small">— Import credit notes from Tally or upload a JSON file</span>
+                    <span class="text-muted small">— Import credit notes from Tally XML / DayBook or upload a file</span>
                 </div>
-                <div class="row g-3 align-items-end">
-                    <div class="col-md-3">
-                        <label class="form-label small fw-bold">From Date</label>
-                        <input type="date" id="fromDate" class="form-control" value="2025-04-01" onchange="applyFilters()">
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label small fw-bold">To Date</label>
-                        <input type="date" id="toDate" class="form-control" value="2025-04-30" onchange="applyFilters()">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold mb-1">From Date</label>
+                        <input type="date" id="fromDate" class="form-control form-control-sm" value="2018-04-01" onchange="applyFilters()">
                     </div>
                     <div class="col-md-2">
-                        <label class="form-label small fw-bold">Limit</label>
-                        <input type="number" id="limitInput" class="form-control" placeholder="All">
+                        <label class="form-label small fw-bold mb-1">To Date</label>
+                        <input type="date" id="toDate" class="form-control form-control-sm" value="2022-03-31" onchange="applyFilters()">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label small fw-bold mb-1">Limit</label>
+                        <input type="number" id="limitInput" class="form-control form-control-sm" placeholder="All">
                     </div>
                     <div class="col-md-2">
-                        <button onclick="fetchData()" id="importBtn" class="btn btn-primary w-100">
-                            <i class="bi bi-cloud-download me-1"></i> Import from Tally
+                        <button onclick="fetchData()" id="importBtn" class="btn btn-sm btn-primary w-100">
+                            <i class="bi bi-cloud-download me-1"></i> Live Tally
+                        </button>
+                    </div>
+                    <div class="col-md-3">
+                        <button onclick="importDayBook()" id="daybookBtn" class="btn btn-sm btn-success w-100 fw-semibold">
+                            <i class="bi bi-file-earmark-code me-1"></i> Import DayBook.xml
                         </button>
                     </div>
                     <div class="col-md-2">
-                        <input type="file" id="jsonUpload" accept=".json" style="display:none" onchange="uploadJson(event)">
-                        <button onclick="document.getElementById('jsonUpload').click()" id="uploadBtn" class="btn btn-outline-primary w-100">
-                            <i class="bi bi-upload me-1"></i> Upload JSON
+                        <input type="file" id="jsonUpload" accept=".json,.xml" style="display:none" onchange="uploadJson(event)">
+                        <button onclick="document.getElementById('jsonUpload').click()" id="uploadBtn" class="btn btn-sm btn-outline-primary w-100">
+                            <i class="bi bi-upload me-1"></i> Upload XML / JSON
                         </button>
                     </div>
                 </div>
@@ -116,42 +145,47 @@
                 <div class="d-flex align-items-center gap-2 mb-3">
                     <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#0288d1;font-size:13px;">STEP 2</span>
                     <span class="fw-semibold">Review &amp; Filter</span>
-                    <span class="text-muted small">— Filter by month, check totals, select credit notes</span>
+                    <span class="text-muted small">— Filter by Financial Year, month, check totals, select credit notes</span>
                     <span id="activeMonthBadge" class="badge bg-primary ms-2" style="display:none;"></span>
                 </div>
 
-                <!-- Month Quick Filter Pills -->
-                <div class="d-flex align-items-center flex-wrap gap-1 mb-3">
-                    <span class="text-muted small fw-bold me-1"><i class="bi bi-calendar3 me-1"></i>Month:</span>
-                    <button class="month-pill" onclick="quickMonth('202504')">Apr 25</button>
-                    <button class="month-pill" onclick="quickMonth('202505')">May 25</button>
-                    <button class="month-pill" onclick="quickMonth('202506')">Jun 25</button>
-                    <button class="month-pill" onclick="quickMonth('202507')">Jul 25</button>
-                    <button class="month-pill" onclick="quickMonth('202508')">Aug 25</button>
-                    <button class="month-pill" onclick="quickMonth('202509')">Sep 25</button>
-                    <button class="month-pill" onclick="quickMonth('202510')">Oct 25</button>
-                    <button class="month-pill" onclick="quickMonth('202511')">Nov 25</button>
-                    <button class="month-pill" onclick="quickMonth('202512')">Dec 25</button>
-                    <button class="month-pill" onclick="quickMonth('202601')">Jan 26</button>
-                    <button class="month-pill" onclick="quickMonth('202602')">Feb 26</button>
-                    <button class="month-pill" onclick="quickMonth('202603')">Mar 26</button>
-                    <button class="btn btn-sm btn-outline-secondary ms-1" onclick="clearMonthFilter()">
+                <!-- Month Quick Filter Bar — Dynamic Year + Month Selector -->
+                <div class="d-flex align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border" id="monthPillsRow">
+                    <span class="text-muted small fw-bold text-nowrap ms-1"><i class="bi bi-calendar3 me-1"></i>Filter Month:</span>
+                    
+                    <select id="yearPillSelect" class="form-select form-select-sm border-secondary fw-semibold text-primary" style="width: auto; min-width: 130px;" onchange="onYearPillSelectChange(this.value)">
+                        <option value="ALL">All Years</option>
+                    </select>
+
+                    <button id="allMonthsPillBtn" class="month-pill fw-bold flex-shrink-0 active" onclick="quickMonth('ALL')">ALL (All Months)</button>
+
+                    <div id="monthPillsContainer" class="d-flex align-items-center gap-1 overflow-auto flex-grow-1 py-1" style="white-space: nowrap; scrollbar-width: thin;">
+                        <!-- Dynamic Month Pills inserted here -->
+                    </div>
+
+                    <button class="btn btn-sm btn-outline-secondary text-nowrap flex-shrink-0 ms-1" onclick="clearMonthFilter()">
                         <i class="bi bi-x-circle me-1"></i>Clear Filter
                     </button>
                 </div>
 
                 <!-- KPI Cards -->
                 <div class="row g-3">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <div class="kpi-card" style="border-color:#5e35b1">
                             <div class="kpi-label">Total Credit Note Vouchers</div>
-                            <div class="kpi-value" id="total-credit-notes">0</div>
+                            <div class="kpi-value text-dark" id="total-credit-notes">0</div>
                         </div>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <div class="kpi-card" style="border-color:#e53935">
-                            <div class="kpi-label">Total Amount Transferred</div>
+                            <div class="kpi-label">Total Amount (Credit)</div>
                             <div class="kpi-value text-danger" id="total-amount">₹0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="kpi-card" style="border-color:#0288d1">
+                            <div class="kpi-label">Total Tax Amount (GST)</div>
+                            <div class="kpi-value text-primary" id="total-tax-amount">₹0</div>
                         </div>
                     </div>
                 </div>
@@ -214,19 +248,21 @@
                                 <input type="checkbox" id="selectAllChk" class="form-check-input" title="Select / Deselect All" onchange="selectAllVisible(this.checked)">
                             </th>
                             <th>Credit Note #</th>
+                            <th>Vch No</th>
                             <th>Date</th>
                             <th>Ref Invoice #</th>
-                            <th>From (Credit)</th>
-                            <th>To (Debit)</th>
-                            <th class="text-end">Amount Transferred</th>
+                            <th>Customer / Party (Cr)</th>
+                            <th>Particulars / Account (Dr)</th>
+                            <th class="text-end">Tax (GST)</th>
+                            <th class="text-end">Amount (₹)</th>
                             <th class="text-center">Action</th>
                         </tr>
                     </thead>
                     <tbody id="tableBody">
                         <tr>
-                            <td colspan="7" class="text-center py-5 text-muted">
+                            <td colspan="10" class="text-center py-5 text-muted">
                                 <i class="bi bi-arrow-left-right fs-1 mb-2"></i><br>
-                                Click "Import from Tally" or select a filter
+                                Click "Import DayBook.xml" or select a filter
                             </td>
                         </tr>
                     </tbody>
@@ -297,19 +333,11 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let allCreditNotes = [];
-        let activeMonth = '';
+        let activeMonth = 'ALL';
+        let selectedYearFilter = 'ALL';
+        let allUniqueYmList = [];
+        let allUniqueYears = [];
         let currentFilteredCreditNotes = [];
-
-        const MONTH_NAMES = {
-            '202404': 'April 2024', '202405': 'May 2024', '202406': 'June 2024',
-            '202407': 'July 2024', '202408': 'August 2024', '202409': 'September 2024',
-            '202410': 'October 2024', '202411': 'November 2024', '202412': 'December 2024',
-            '202501': 'January 2025', '202502': 'February 2025', '202503': 'March 2025',
-            '202504': 'April 2025', '202505': 'May 2025', '202506': 'June 2025',
-            '202507': 'July 2025', '202508': 'August 2025', '202509': 'September 2025',
-            '202510': 'October 2025', '202511': 'November 2025', '202512': 'December 2025',
-            '202601': 'January 2026', '202602': 'February 2026', '202603': 'March 2026'
-        };
 
         // Load DB credit notes on startup
         document.addEventListener('DOMContentLoaded', async () => {
@@ -319,49 +347,14 @@
                     const data = await res.json();
                     if (data.credit_notes && data.credit_notes.length > 0) {
                         allCreditNotes = data.credit_notes;
-                        // Default to April 2025 filter
-                        quickMonth('202504');
+                        buildMonthPills();
+                        quickMonth('ALL');
                     }
                 }
             } catch (err) {
                 console.warn('DB load failed:', err);
             }
         });
-
-        function quickMonth(ym) {
-            activeMonth = (activeMonth === ym) ? '' : ym;
-            if (activeMonth) {
-                const year = activeMonth.slice(0, 4);
-                const month = activeMonth.slice(4, 6);
-                const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-                document.getElementById('fromDate').value = `${year}-${month}-01`;
-                document.getElementById('toDate').value = `${year}-${month}-${lastDay < 10 ? '0' + lastDay : lastDay}`;
-            }
-            updatePillUI();
-            applyFilters();
-        }
-
-        function clearMonthFilter() {
-            activeMonth = '';
-            updatePillUI();
-            applyFilters();
-        }
-
-        function updatePillUI() {
-            document.querySelectorAll('.month-pill').forEach(btn => {
-                const ym = btn.getAttribute('onclick').match(/'(\d+)'/)?.[1];
-                btn.classList.toggle('active', ym === activeMonth);
-            });
-            const badge = document.getElementById('activeMonthBadge');
-            if (badge) {
-                if (activeMonth) {
-                    badge.style.display = 'inline-block';
-                    badge.textContent   = MONTH_NAMES[activeMonth] || activeMonth;
-                } else {
-                    badge.style.display = 'none';
-                }
-            }
-        }
 
         function getNormalizedDate(d) {
             if (!d) return '';
@@ -375,8 +368,133 @@
             return `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}`;
         }
 
+        function formatDisplayDate(tallyDate) {
+            if (!tallyDate) return '-';
+            const d = getNormalizedDate(tallyDate);
+            if (d.length !== 8) return tallyDate;
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const day = d.slice(6, 8);
+            const mIdx = parseInt(d.slice(4, 6), 10) - 1;
+            const yr = d.slice(2, 4);
+            return `${day}-${months[mIdx] || d.slice(4, 6)}-${yr}`;
+        }
+
         function formatDateForAPI(dateInput) {
             return dateInput.replace(/-/g, '');
+        }
+
+        function getMonthName(ym) {
+            if (!ym || ym.length < 6) return ym;
+            const year = ym.slice(2, 4);
+            const mNum = ym.slice(4, 6);
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const idx = parseInt(mNum, 10) - 1;
+            return (months[idx] || mNum) + ' ' + year;
+        }
+
+        function buildMonthPills() {
+            const ymSet = new Set();
+            const yearSet = new Set();
+
+            (allCreditNotes || []).forEach(c => {
+                const d = getNormalizedDate(c.date);
+                if (d && d.length >= 6) {
+                    ymSet.add(d.slice(0, 6));
+                    yearSet.add(d.slice(0, 4));
+                }
+            });
+
+            allUniqueYmList = Array.from(ymSet).sort();
+            allUniqueYears = Array.from(yearSet).sort();
+
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) {
+                const currentVal = yearSelect.value || selectedYearFilter;
+                yearSelect.innerHTML = '<option value="ALL">All Years (' + allUniqueYears.length + ')</option>';
+                allUniqueYears.forEach(y => {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = 'Year ' + y;
+                    yearSelect.appendChild(opt);
+                });
+                yearSelect.value = allUniqueYears.includes(currentVal) ? currentVal : 'ALL';
+                selectedYearFilter = yearSelect.value;
+            }
+
+            renderFilteredPills();
+        }
+
+        function renderFilteredPills() {
+            const container = document.getElementById('monthPillsContainer');
+            if (!container) return;
+
+            container.innerHTML = '';
+            let filteredYms = allUniqueYmList;
+            if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                filteredYms = allUniqueYmList.filter(ym => ym.startsWith(selectedYearFilter));
+            }
+
+            filteredYms.forEach(ym => {
+                const label = getMonthName(ym);
+                const btn = document.createElement('button');
+                btn.className = 'month-pill' + (ym === activeMonth ? ' active' : '');
+                btn.textContent = label;
+                btn.setAttribute('onclick', `quickMonth('${ym}')`);
+                container.appendChild(btn);
+            });
+        }
+
+        function quickMonth(ym) {
+            if (ym === 'ALL') {
+                activeMonth = 'ALL';
+            } else {
+                activeMonth = (activeMonth === ym) ? 'ALL' : ym;
+            }
+            updatePillUI();
+            applyFilters();
+        }
+
+        function clearMonthFilter() {
+            activeMonth = 'ALL';
+            selectedYearFilter = 'ALL';
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) yearSelect.value = 'ALL';
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function onYearPillSelectChange(selectedYear) {
+            selectedYearFilter = selectedYear;
+            if (selectedYear === 'ALL') {
+                activeMonth = 'ALL';
+            } else if (activeMonth !== 'ALL' && !activeMonth.startsWith(selectedYear)) {
+                activeMonth = 'ALL';
+            }
+            renderFilteredPills();
+            updatePillUI();
+            applyFilters();
+        }
+
+        function updatePillUI() {
+            document.querySelectorAll('.month-pill').forEach(btn => {
+                const onclickStr = btn.getAttribute('onclick') || '';
+                const match = onclickStr.match(/'([^']+)'/);
+                const ym = match ? match[1] : '';
+                btn.classList.toggle('active', ym === activeMonth);
+            });
+            const badge = document.getElementById('activeMonthBadge');
+            if (badge) {
+                if (activeMonth && activeMonth !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = getMonthName(activeMonth);
+                } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    badge.style.display = 'inline-block';
+                    badge.textContent   = 'Year ' + selectedYearFilter;
+                } else {
+                    badge.style.display = 'none';
+                }
+            }
         }
 
         function applyFilters() {
@@ -390,8 +508,10 @@
                 let match = true;
                 const cnDate = getNormalizedDate(c.date);
 
-                if (activeMonth) {
+                if (activeMonth && activeMonth !== 'ALL') {
                     if (!cnDate.startsWith(activeMonth)) match = false;
+                } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                    if (!cnDate.startsWith(selectedYearFilter)) match = false;
                 } else {
                     if (fromDateStr && cnDate && cnDate < fromDateStr) match = false;
                     if (toDateStr && cnDate && cnDate > toDateStr) match = false;
@@ -399,10 +519,16 @@
 
                 if (match && q) {
                     const cnNo = (c.credit_note_number || '').toLowerCase();
+                    const vNo = (c.voucher_number || '').toLowerCase();
+                    const refNo = (c.reference_number || '').toLowerCase();
                     const fromAcc = (c.from_account || '').toLowerCase();
                     const toAcc = (c.to_account || '').toLowerCase();
+                    const party = (c.party_name || '').toLowerCase();
+                    const narr = (c.narration || '').toLowerCase();
                     const amtStr = (c.amount || '').toString();
-                    if (!cnNo.includes(q) && !fromAcc.includes(q) && !toAcc.includes(q) && !amtStr.includes(q)) match = false;
+                    if (!cnNo.includes(q) && !vNo.includes(q) && !refNo.includes(q) && !fromAcc.includes(q) && !toAcc.includes(q) && !party.includes(q) && !narr.includes(q) && !amtStr.includes(q)) {
+                        match = false;
+                    }
                 }
 
                 return match;
@@ -416,19 +542,51 @@
 
             // Recalculate KPIs dynamically for filtered set
             const totalAmount = filtered.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+            const totalTaxAmount = filtered.reduce((s, c) => s + (parseFloat(c.tax_amount) || 0), 0);
             document.getElementById('total-credit-notes').innerText = filtered.length.toLocaleString();
             document.getElementById('total-amount').innerText = '₹' + totalAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const taxEl = document.getElementById('total-tax-amount');
+            if (taxEl) {
+                taxEl.innerText = '₹' + totalTaxAmount.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            }
 
             const status = document.getElementById('filterStatus');
             if (status) {
                 status.textContent = filtered.length !== allCreditNotes.length
-                    ? `Showing ${filtered.length} of ${allCreditNotes.length} credit notes` : '';
+                    ? `Showing ${filtered.length} of ${allCreditNotes.length} credit notes` : `Total ${allCreditNotes.length} credit notes`;
             }
 
             renderCreditNotes(filtered);
         }
 
-        function handleSearch() { applyFilters(); }
+        async function importDayBook() {
+            const btn = document.getElementById('daybookBtn');
+            const orig = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Importing DayBook.xml...';
+
+            try {
+                const res = await fetch('/api/credit_note/import_daybook', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: 'C:\\Program Files\\TallyPrimeEditLog\\DayBook.xml' })
+                });
+                const data = await res.json();
+                if (data.error) {
+                    alert('Import Error: ' + data.error);
+                } else {
+                    alert(`Success: ${data.message || 'Imported ' + data.count + ' credit notes!'}`);
+                    allCreditNotes = data.credit_notes || [];
+                    buildMonthPills();
+                    quickMonth('ALL');
+                }
+            } catch (err) {
+                alert('Failed to import DayBook.xml: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+            }
+        }
 
         async function uploadJson(event) {
             const file = event.target.files[0];
@@ -452,7 +610,9 @@
                     alert('Error: ' + data.error);
                 } else {
                     allCreditNotes = data.credit_notes || [];
-                    applyFilters();
+                    buildMonthPills();
+                    quickMonth('ALL');
+                    alert(`Successfully imported ${allCreditNotes.length} credit notes!`);
                 }
             } catch (error) {
                 alert('Upload failed: ' + error.message);
@@ -485,7 +645,8 @@
                 if (data.error) { alert('Error: ' + data.error); return; }
 
                 allCreditNotes = data.credit_notes || [];
-                applyFilters();
+                buildMonthPills();
+                quickMonth('ALL');
             } catch (err) {
                 console.error(err);
                 alert('Connection Error');
@@ -505,7 +666,7 @@
                 alert('No credit notes found in the current filter range to sync.');
                 return;
             }
-            const label = activeMonth ? (MONTH_NAMES[activeMonth] || activeMonth) : 'current filter';
+            const label = activeMonth ? (getMonthName(activeMonth) || activeMonth) : 'current filter';
             if (!confirm(`Sync ${currentFilteredCreditNotes.length} credit note(s) for ${label} to Zoho Books?`)) return;
 
             await _pushCreditNotesToZoho(currentFilteredCreditNotes, 'syncMonthBtn');
@@ -569,7 +730,7 @@
             currentFilteredCreditNotes = credit_notes;
             const tbody = document.getElementById('tableBody');
             if (!credit_notes || credit_notes.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">No Credit Notes Found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4 text-muted">No Credit Notes Found</td></tr>';
                 updateSelectionUI();
                 return;
             }
@@ -577,18 +738,21 @@
             tbody.innerHTML = credit_notes.map((c) => {
                 const realIdx = allCreditNotes.indexOf(c);
                 const amt = parseFloat(c.amount) || 0;
+                const taxAmt = parseFloat(c.tax_amount) || 0;
                 return `
                 <tr style="cursor:pointer" onclick="showDetails(${realIdx})">
                     <td onclick="event.stopPropagation()">
                         <input type="checkbox" class="form-check-input cn-chk" data-idx="${realIdx}"
                             onchange="updateSelectionUI()">
                     </td>
-                    <td class="fw-medium text-primary">${c.credit_note_number || '-'}</td>
+                    <td class="fw-bold text-primary font-monospace">${c.credit_note_number || '-'}</td>
+                    <td><span class="badge bg-secondary-subtle text-secondary border font-monospace">${c.voucher_number || '-'}</span></td>
                     <td>${formatDate(c.date)}</td>
                     <td><span class="badge bg-light text-dark border font-monospace">${c.reference_number || '-'}</span></td>
-                    <td class="text-danger">${c.from_account || '-'}</td>
+                    <td class="fw-semibold text-danger">${c.party_name || c.from_account || '-'}</td>
                     <td class="text-success">${c.to_account || '-'}</td>
-                    <td class="text-end fw-bold">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                    <td class="text-end text-muted">₹${taxAmt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                    <td class="text-end fw-bold text-dark">₹${amt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
                     <td class="text-center">
                         <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showDetails(${realIdx})">
                             <i class="bi bi-eye"></i> View
@@ -635,55 +799,96 @@
             const c = allCreditNotes[idx];
             const modal = new bootstrap.Modal(document.getElementById('creditNoteModal'));
 
-            const ledgerRows = (c.ledger_entries || []).map(e =>
-                `<tr>
-                    <td>${e.ledger_name}</td>
-                    <td class="text-end ${e.amount < 0 ? 'text-danger' : 'text-success'}">
-                        ${e.amount < 0 ? '(-)' : ''}&#8377;${Math.abs(e.amount || 0).toLocaleString()} ${e.amount < 0 ? 'Cr' : 'Dr'}
-                    </td>
-                </tr>`
-            ).join('');
+            const ledgers = c.ledger_entries || [];
+            let totalDr = 0;
+            let totalCr = 0;
 
-            const costCenterRows = (c.cost_center_allocations || []).map(cc =>
-                `<tr>
-                    <td>${cc.category || 'Unknown'}</td>
-                    <td class="text-end">&#8377;${(cc.amount || 0).toLocaleString()}</td>
-                </tr>`
-            ).join('');
+            const particularRows = ledgers.map(e => {
+                const eAmt = parseFloat(e.amount) || 0;
+                const isCr = (e.type === 'party') || (e.amount > 0 && e.is_deemed_positive === false) || (e.raw_amount > 0);
+                if (isCr) {
+                    totalCr += eAmt;
+                    return `
+                    <tr>
+                        <td><span class="fw-bold text-danger me-1">To</span> <strong>${e.ledger_name}</strong> <small class="text-muted ps-2">(Party / Customer)</small></td>
+                        <td></td>
+                        <td class="text-end text-danger fw-semibold">₹${eAmt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                    </tr>`;
+                } else {
+                    totalDr += eAmt;
+                    const isTax = (e.type === 'tax') || e.ledger_name.toLowerCase().includes('gst');
+                    return `
+                    <tr>
+                        <td><span class="fw-bold text-success me-1">By</span> <strong>${e.ledger_name}</strong> ${isTax ? '<span class="badge bg-info-subtle text-info border ms-2">GST Tax</span>' : '<small class="text-muted ps-2">(Reversed Particular)</small>'}</td>
+                        <td class="text-end text-success fw-semibold">₹${eAmt.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                        <td></td>
+                    </tr>`;
+                }
+            }).join('');
 
             const itemRows = (c.line_items || []).map(item =>
                 `<tr>
                     <td>${item.item_name}</td>
                     <td class="text-center">${item.quantity}</td>
-                    <td class="text-end">&#8377;${(item.rate || 0).toLocaleString()}</td>
-                    <td class="text-end fw-bold">&#8377;${(item.amount || 0).toLocaleString()}</td>
+                    <td class="text-end">₹${(parseFloat(item.rate) || 0).toLocaleString()}</td>
+                    <td class="text-end fw-bold">₹${(parseFloat(item.amount) || 0).toLocaleString()}</td>
                 </tr>`
             ).join('');
 
             document.getElementById('creditNoteDetails').innerHTML = `
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <h6 class="text-secondary border-bottom pb-2">Voucher Info</h6>
-                        <table class="table table-sm">
-                            <tr><th width="40%">Credit Note #:</th><td>${c.credit_note_number || '-'}</td></tr>
-                            <tr><th>Date:</th><td>${formatDate(c.date)}</td></tr>
-                            <tr><th>Ref Invoice #:</th><td><span class="badge bg-primary-subtle text-primary border fw-bold">${c.reference_number || '-'}</span></td></tr>
-                            <tr><th>Amount:</th><td class="fw-bold">₹${(c.amount || 0).toLocaleString()}</td></tr>
-                        </table>
+                <div class="card mb-3 border-0 bg-light">
+                    <div class="card-body p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                            <div>
+                                <span class="badge bg-primary fs-6 me-2">Credit Note</span>
+                                <span class="fw-bold fs-5">No. ${c.voucher_number || c.credit_note_number}</span>
+                                <span class="badge bg-dark-subtle text-dark border ms-2 font-monospace">${c.credit_note_number}</span>
+                            </div>
+                            <div class="text-end">
+                                <span class="fw-bold text-dark fs-6">${formatDisplayDate(c.date)}</span>
+                                ${c.financial_year ? `<span class="badge bg-info-subtle text-info border ms-1">FY ${c.financial_year}</span>` : ''}
+                            </div>
+                        </div>
+                        <div class="row g-2 small text-muted pt-2 border-top">
+                            <div class="col-md-4"><strong>Customer / Party:</strong> <span class="text-dark fw-semibold">${c.party_name || c.from_account}</span></div>
+                            <div class="col-md-4"><strong>Ref Invoice #:</strong> <span class="badge bg-light text-primary border font-monospace">${c.reference_number || '-'}</span> ${c.reference_date ? `(${formatDate(c.reference_date)})` : ''}</div>
+                            <div class="col-md-4"><strong>Party GSTIN:</strong> <span class="font-monospace text-dark">${c.party_gstin || '-'}</span></div>
+                            <div class="col-md-4"><strong>Place of Supply:</strong> <span class="text-dark">${c.place_of_supply || '-'}</span></div>
+                            <div class="col-md-4"><strong>Taxable Amount:</strong> <span class="fw-semibold text-dark">₹${(parseFloat(c.taxable_amount) || (c.amount - (c.tax_amount||0))).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</span></div>
+                            <div class="col-md-4"><strong>Total Amount:</strong> <span class="fw-bold text-primary">₹${(parseFloat(c.amount) || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</span></div>
+                        </div>
                     </div>
-                    <div class="col-md-6">
-                        <h6 class="text-secondary border-bottom pb-2">Transacted Between</h6>
-                        <table class="table table-sm">
-                            <tr><th width="40%" class="text-danger">From (Cr):</th><td>${c.from_account || '-'}</td></tr>
-                            <tr><th class="text-success">To (Dr):</th><td>${c.to_account || '-'}</td></tr>
-                        </table>
-                    </div>
-                    
-                    ${itemRows ? `
-                    <div class="col-12 mt-3">
-                        <h6 class="text-secondary border-bottom pb-2">Inventory Items</h6>
-                        <table class="table table-sm table-hover border">
-                            <thead class="bg-light">
+                </div>
+
+                <h6 class="text-secondary fw-bold mb-2"><i class="bi bi-list-columns-reverse me-1"></i>Accounting Voucher Particulars (Tally Format)</h6>
+                <div class="table-responsive mb-3 border rounded shadow-sm">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Particulars</th>
+                                <th class="text-end" style="width:160px;">Debit (₹)</th>
+                                <th class="text-end" style="width:160px;">Credit (₹)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${particularRows}
+                        </tbody>
+                        <tfoot class="table-light fw-bold">
+                            <tr>
+                                <td>Total</td>
+                                <td class="text-end text-success">₹${totalDr.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                                <td class="text-end text-danger">₹${totalCr.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                ${itemRows ? `
+                <div class="mb-3">
+                    <h6 class="text-secondary fw-bold mb-2">Inventory Items</h6>
+                    <div class="table-responsive border rounded">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
                                 <tr>
                                     <th>Item Name</th>
                                     <th class="text-center">Quantity</th>
@@ -693,26 +898,14 @@
                             </thead>
                             <tbody>${itemRows}</tbody>
                         </table>
-                    </div>` : ''}
+                    </div>
+                </div>` : ''}
 
-                    <div class="col-12 mt-3" ${costCenterRows ? '' : 'style="display:none"'}>
-                        <h6 class="text-secondary border-bottom pb-2">Cost Center Allocations</h6>
-                        <table class="table table-sm table-hover border">
-                            <thead class="bg-light"><tr><th>Category - Cost Center</th><th class="text-end">Amount</th></tr></thead>
-                            <tbody>${costCenterRows}</tbody>
-                        </table>
-                    <div class="col-12 mt-3">
-                        <h6 class="text-secondary border-bottom pb-2">Ledger Breakdown</h6>
-                        <table class="table table-sm table-hover border">
-                            <thead class="bg-light"><tr><th>Ledger</th><th class="text-end">Amount</th></tr></thead>
-                            <tbody>${ledgerRows}</tbody>
-                        </table>
-                    </div>
-                    <div class="col-12 mt-3" ${c.narration ? '' : 'style="display:none"'}>
-                        <h6 class="text-secondary border-bottom pb-2">Narration</h6>
-                        <p class="text-muted small p-2 bg-light rounded">${c.narration || '-'}</p>
-                    </div>
-                </div>
+                ${c.narration ? `
+                <div class="mb-2">
+                    <h6 class="text-secondary fw-bold mb-1"><i class="bi bi-chat-left-text me-1"></i>Narration</h6>
+                    <div class="p-2 bg-light rounded border text-muted small">${c.narration}</div>
+                </div>` : ''}
             `;
             modal.show();
         }
