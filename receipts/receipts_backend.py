@@ -966,6 +966,18 @@ def generate_sync_errors_excel(errors):
     from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
     from datetime import datetime
 
+    # Deduplicate errors by receipt_number
+    deduped_errors = []
+    seen_vouchers = set()
+    for err in (errors or []):
+        v_no = str(err.get("receipt_number") or err.get("Receipt Number") or err.get("voucher_number") or "").strip()
+        if v_no:
+            if v_no in seen_vouchers:
+                continue
+            seen_vouchers.add(v_no)
+        deduped_errors.append(err)
+    errors = deduped_errors
+
     wb = Workbook()
     
     # --- Sheet 1: Receipts ---
@@ -1227,6 +1239,24 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                 return cid
             if "perkin" in c_norm and "perkin" in k:
                 return cid
+
+        # 4. Token set intersection / keyword matching
+        stop_words = {'pvt', 'ltd', 'private', 'limited', 'the', 'and', 'for', 'llp', 'bar', 'exchange', 'ms'}
+        c_tokens = {w for w in re.findall(r'[a-z0-9]+', (customer_name or '').lower()) if len(w) >= 3 and w not in stop_words}
+        if c_tokens:
+            best_cid = ""
+            best_overlap = 0
+            for k, cid in customer_cache.items():
+                k_tokens = {w for w in re.findall(r'[a-z0-9]+', k) if len(w) >= 3 and w not in stop_words}
+                inter = c_tokens.intersection(k_tokens)
+                if len(inter) >= 2 and len(inter) > best_overlap:
+                    best_overlap = len(inter)
+                    best_cid = cid
+                special_keys = {'lakshmiram', 'infinitum', 'purabhi', 'stoner', 'amoeba', 'tranquil', 'zaan', 'sugam', 'thulp', 'tangent', 'ebony', 'biergarten'}
+                if any(sk in inter for sk in special_keys) and not best_cid:
+                    best_cid = cid
+            if best_cid:
+                return best_cid
         return ""
 
     # Cache: bank accounts (backed by SQLite zoho_masters_cache)
@@ -1275,6 +1305,77 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                 return aid
         # 3) Fallback
         return list(bank_account_cache.values())[0] if bank_account_cache else ""
+
+    # Cache: TDS accounts (backed by SQLite zoho_masters_cache)
+    tds_account_cache = {}
+
+    def _load_tds_accounts():
+        creds = _get_creds()
+        org_id = creds.get("org_id", "")
+        if database_manager and hasattr(database_manager, 'get_zoho_master_cache'):
+            cached = database_manager.get_zoho_master_cache('tds_accounts', expected_org_id=org_id)
+            if cached and isinstance(cached, dict):
+                tds_account_cache.update(cached)
+                _emit(f"Loaded {len(tds_account_cache)} TDS accounts from local SQLite DB cache (0 API calls)")
+                return
+
+        page = 1
+        while True:
+            resp = zoho.api_call("GET", "/chartofaccounts", params={"page": page, "per_page": 200})
+            if resp.get("code") != 0:
+                break
+            accounts = resp.get("chartofaccounts", []) or []
+            for acc in accounts:
+                nm = (acc.get("account_name") or "").strip()
+                aid = (acc.get("account_id") or "").strip()
+                if nm and aid and ("tds" in nm.lower() or "withholding" in nm.lower() or "tax" in nm.lower()):
+                    tds_account_cache[_norm(nm)] = aid
+            has_more = resp.get("page_context", {}).get("has_more_page", False)
+            if not has_more:
+                break
+            page += 1
+
+        if tds_account_cache and database_manager and hasattr(database_manager, 'save_zoho_master_cache'):
+            database_manager.save_zoho_master_cache('tds_accounts', tds_account_cache, org_id=org_id)
+
+    def _get_tds_account_id(tds_ledger_name: str, receipt_date: str = "") -> str:
+        if not tds_account_cache:
+            _emit("Loading Zoho TDS accounts...")
+            _load_tds_accounts()
+            _emit(f"Loaded {len(tds_account_cache)} TDS accounts")
+
+        norm_tds = _norm(tds_ledger_name)
+        # 1. Exact normalized match
+        if norm_tds in tds_account_cache:
+            return tds_account_cache[norm_tds]
+
+        # 2. Substring match
+        for nm, aid in tds_account_cache.items():
+            if norm_tds and (norm_tds in nm or nm in norm_tds):
+                return aid
+
+        # 3. Match by Financial Year from receipt_date
+        s = re.sub(r'[^0-9]', '', str(receipt_date or ''))
+        fy_suffix = ""
+        if len(s) >= 8:
+            yr = int(s[:4])
+            m = int(s[4:6])
+            if m >= 4:
+                fy_suffix = f"{yr}{str(yr+1)[-2:]}"
+            else:
+                fy_suffix = f"{yr-1}{str(yr)[-2:]}"
+
+        if fy_suffix:
+            for nm, aid in tds_account_cache.items():
+                if "receivable" in nm and fy_suffix in nm:
+                    return aid
+
+        # 4. Fallback to general "TDS Receivable" or first TDS account
+        for nm, aid in tds_account_cache.items():
+            if nm == "tdsreceivable" or ("tds" in nm and "receivable" in nm):
+                return aid
+
+        return list(tds_account_cache.values())[0] if tds_account_cache else "3615610000000032026"
 
     # Load cached Zoho invoices from local SQLite table (Zero-API reuse)
     all_zoho_invoices_cache = []
@@ -1411,7 +1512,7 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
         _customer_ob_cache[cid] = None
         return None
 
-    def _resolve_invoice(invoice_number: str, cust_id: str = "", cust_name: str = "", amount: float = 0.0, narration: str = "", exclude_invoice_ids: set = None, receipt_date: str = ""):
+    def _resolve_invoice(invoice_number: str, cust_id: str = "", cust_name: str = "", amount: float = 0.0, narration: str = "", exclude_invoice_ids: set = None, receipt_date: str = "", net_amount: float = 0.0):
         """
         Dynamic Multi-Tier Invoice Resolution for Payment Received:
         1. Condition 1: Direct Exact Invoice Number Match (e.g. TTMH/282/21-22 or 282 or GF/282).
@@ -1419,7 +1520,7 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
            - Filters and resolves year change duplicates: prioritizes invoices issued BEFORE / ON payment received date.
            - Checks amount matching (full amount or partial/TDS).
         3. Condition 3: Dynamic Narration Number Extraction + Date Prior + Amount Matching.
-        4. Condition 4: Exact Customer + Prior Date + Exact Amount Match.
+        4. Condition 4: Exact Customer + Prior Date + Exact Amount Match (supports gross customer amount and net bank amount).
         5. Condition 1 Fallback: Direct Zoho Search API if not found in cache.
         """
         exclude_invoice_ids = exclude_invoice_ids or set()
@@ -1441,6 +1542,7 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                 or ("perkin" in cname_clean and "perkin" in _norm(inv.get("customer_name")))
                 or ("biomerieux" in cname_clean and "biomerieux" in _norm(inv.get("customer_name")))
                 or ("dhl" in cname_clean and "dhl" in _norm(inv.get("customer_name")))
+                or (cust_name and inv.get("customer_name") and len(set(re.findall(r'[a-z0-9]+', (cust_name or '').lower())).intersection(set(re.findall(r'[a-z0-9]+', (inv.get('customer_name') or '').lower())) - {'pvt','ltd','private','limited','the','and','for','llp','bar','exchange','ms'})) >= 2)
             )
         ]
 
@@ -1469,7 +1571,7 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
         # -------------------------------------------------------------
         if ref_digits:
             target_num = ref_digits[0]
-            inv_pool = cust_invs if cust_invs else all_zoho_invoices_cache
+            inv_pool = cust_invs
             matching_candidates = []
             for inv in inv_pool:
                 inv_no = (inv.get("invoice_number") or "").strip()
@@ -1549,6 +1651,7 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
 
         # -------------------------------------------------------------
         # CONDITION 4: Exact Customer + Prior Date + Exact Amount Match
+        # Handles user rule: check prior invoices for customer, match gross or net amount
         # -------------------------------------------------------------
         prior_cust_invs = [
             inv for inv in cust_invs 
@@ -1559,39 +1662,45 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
             if _is_amount_matching(inv, amount):
                 inv_no = (inv.get("invoice_number") or "").strip()
                 return inv, f"Condition 4: Customer Prior Date + Exact Amount Match ('{inv_no}')"
+            if net_amount > 0 and _is_amount_matching(inv, net_amount):
+                inv_no = (inv.get("invoice_number") or "").strip()
+                return inv, f"Condition 4: Customer Prior Date + Net Bank Amount Match ('{inv_no}')"
 
         for inv in cust_invs:
             if _is_amount_matching(inv, amount):
                 inv_no = (inv.get("invoice_number") or "").strip()
                 return inv, f"Condition 4: Customer Exact Amount Match ('{inv_no}')"
+            if net_amount > 0 and _is_amount_matching(inv, net_amount):
+                inv_no = (inv.get("invoice_number") or "").strip()
+                return inv, f"Condition 4: Customer Net Bank Amount Match ('{inv_no}')"
+
 
         # -------------------------------------------------------------
-        # CONDITION 1 Fallback: Direct Zoho Search API if key exists
+        # CONDITION AI: NVIDIA NIM Narration Matching (OFF for ultra-fast table-based sync)
         # -------------------------------------------------------------
-        if key:
-            resp = zoho.api_call("GET", "/invoices", params={"search_text": key, "per_page": 200})
-            if resp.get("code") == 0:
-                for inv in resp.get("invoices", []) or []:
-                    inv_no = (inv.get("invoice_number") or "").strip()
-                    if inv_no.lower() == key.lower():
-                        inv_bal = float(inv.get("balance") or inv.get("total") or 0)
-                        if _is_amount_matching(inv, amount):
-                            return inv, "Condition 1: Exact API Match & Full Amount Match"
-                        elif amount <= (inv_bal + 50.0):
-                            return inv, f"Condition 1: Exact API Match (Partial/TDS Payment: ₹{amount:,.2f})"
+        ENABLE_AI_RESOLVER = False
+        if ENABLE_AI_RESOLVER and narration and cust_invs:
+            try:
+                from modules.ai_invoice_matcher import ai_resolve_invoice_candidate
+                ai_inv, ai_reason = ai_resolve_invoice_candidate(narration, cust_invs, amount, net_amount)
+                if ai_inv:
+                    return ai_inv, ai_reason
+            except Exception:
+                pass
 
         # -------------------------------------------------------------
-        # CONDITION 5: Customer Opening Balance Match (for pre-FY 18-19 bills)
-        # Database only covers FY 18-22; if invoice is prior to 18-19,
-        # apply payment amount to the customer's Opening Balance invoice.
+        # CONDITION 5: Customer Opening Balance Match (User Rule)
+        # If amount <= OB: apply to OB (full or partial payment) -> DO NOT give error!
+        # If amount > OB: amount exceeds OB -> do NOT match (give error)!
         # -------------------------------------------------------------
         if cust_id:
             ob_inv = _get_customer_ob_invoice(cust_id)
             if ob_inv:
                 ob_inv_no = ob_inv.get("invoice_number", "Customer opening balance")
-                ob_tot = float(ob_inv.get("total") or ob_inv.get("balance") or 0)
-                if ob_tot > 0 or amount > 0:
-                    return ob_inv, f"Condition 5: Customer Opening Balance Match ('{ob_inv_no}') (Pre-FY 18-19 Bill '{key}', OB Total: ₹{ob_tot:,.2f})"
+                ob_tot = float(ob_inv.get("balance") or ob_inv.get("total") or 0)
+                target_amt = net_amount if (net_amount > 0 and net_amount <= (ob_tot + 10.0)) else amount
+                if target_amt <= (ob_tot + 10.0) and target_amt > 0:
+                    return ob_inv, f"Condition 5: Customer Opening Balance Match ('{ob_inv_no}') (Applied: ₹{target_amt:,.2f} of OB Total: ₹{ob_tot:,.2f})"
 
         return None, "Amount mismatch or Invoice not found"
 
@@ -1628,6 +1737,12 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
         receipt_no = r.get("receipt_number") or ""
         receipt_date_iso = _tally_to_iso(r.get("date") or "")
 
+        # Check if already synced in Zoho
+        if r.get("zoho_payment_id") and r.get("zoho_status") == "synced":
+            _emit(f"[{idx}/{stats['total']}] Receipt {receipt_no} already synced (Zoho ID: {r.get('zoho_payment_id')}). Skipping.")
+            stats["already_synced"] += 1
+            continue
+
         customer_name = (r.get("customer_name") or "").strip()
         customer_id = _get_customer_id(customer_name)
         if not customer_id:
@@ -1647,6 +1762,39 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
             _emit(f"[{idx}/{stats['total']}] Customer not found: {customer_name} (receipt {receipt_no})")
             continue
 
+        # Parse ledgers for Customer Gross Amount, Net Bank Amount, and TDS Amount
+        try:
+            ledgers = r.get("ledger_entries") or "[]"
+            if isinstance(ledgers, str):
+                ledgers = json.loads(ledgers) if ledgers.strip() else []
+        except Exception:
+            ledgers = []
+
+        cust_gross_amt = _safe_float(r.get("customer_ledger_amount") or r.get("amount"))
+        bank_net_amt = 0.0
+        tds_amt = 0.0
+        tds_ledger_name = ""
+        bank_account_from_ledger = ""
+
+        for l in ledgers:
+            nm = str(l.get("ledger_name") or "").strip()
+            lamt = _safe_float(l.get("amount"))
+            if "tds" in nm.lower():
+                tds_amt += abs(lamt)
+                tds_ledger_name = nm
+            elif lamt < 0:
+                bank_net_amt += abs(lamt)
+                if not bank_account_from_ledger:
+                    bank_account_from_ledger = nm
+            elif lamt > 0 and cust_gross_amt <= 0:
+                cust_gross_amt = lamt
+
+        if bank_net_amt <= 0:
+            bank_net_amt = max(0.0, cust_gross_amt - tds_amt)
+
+        bank_account_name = (r.get("bank_account") or "").strip() or bank_account_from_ledger
+        account_id = _get_account_id(bank_account_name)
+
         try:
             allocs = r.get("invoice_allocations") or "[]"
             if isinstance(allocs, str):
@@ -1664,6 +1812,7 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
         payment_customer_id = customer_id
 
         used_invoice_ids = set()
+        alloc_failed = False
         for a in allocs:
             btype = str((a or {}).get("bill_type") or (a or {}).get("billtype") or "").strip() or "Agst Ref"
             ref = str((a or {}).get("invoice_number") or (a or {}).get("invoice") or "").strip()
@@ -1692,7 +1841,8 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                 amount=amount,
                 narration=r.get("narration") or "",
                 exclude_invoice_ids=used_invoice_ids,
-                receipt_date=receipt_date_iso or r.get("date") or ""
+                receipt_date=receipt_date_iso or r.get("date") or "",
+                net_amount=bank_net_amt
             )
 
             if matched_inv:
@@ -1705,10 +1855,15 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
 
                 inv_bal = float(matched_inv.get("balance") or matched_inv.get("total") or amount)
                 inv_no = matched_inv.get("invoice_number", "")
+                inv_app_amt = amount
+                if matched_inv.get("is_ob"):
+                    ob_tot = float(matched_inv.get("balance") or matched_inv.get("total") or 0)
+                    if ob_tot > 0:
+                        inv_app_amt = min(amount, ob_tot)
 
-                _emit(f"Receipt {receipt_no}: [{match_reason}] Matched Invoice in Zoho '{inv_no}' (ID: {zoho_invoice_id}) for ref '{ref}' (₹{amount:,.2f})")
-                curr_sum += amount
-                invoice_lines.append({"invoice_id": zoho_invoice_id, "amount_applied": amount, "ref": (inv_no if matched_inv.get("is_ob") else ref), "bucket": "current"})
+                _emit(f"Receipt {receipt_no}: [{match_reason}] Matched Invoice in Zoho '{inv_no}' (ID: {zoho_invoice_id}) for ref '{ref}' (₹{inv_app_amt:,.2f})")
+                curr_sum += inv_app_amt
+                invoice_lines.append({"invoice_id": zoho_invoice_id, "amount_applied": inv_app_amt, "ref": (inv_no if matched_inv.get("is_ob") else ref), "bucket": "current"})
             else:
                 # User Rule: If amount is matching with nothing, give the error message in the report immediately!
                 err_msg = f"Amount mismatch or Invoice not found for customer '{customer_name}' (Ref: '{ref}', Amount: ₹{amount:,.2f}, Narration: '{r.get('narration', '')}')"
@@ -1720,7 +1875,7 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                     "customer": customer_name,
                     "payment_mode": r.get("payment_mode") or "Bank Transfer",
                     "amount": amount,
-                    "bank_account": r.get("bank_account") or "",
+                    "bank_account": bank_account_name,
                     "reference_number": ref,
                     "description": r.get("narration") or "",
                     "Invoice Numbers": ref,
@@ -1731,10 +1886,15 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                     database_manager.update_receipt_status(receipt_no, zoho_payment_id=None, zoho_status='failed', zoho_error=err_msg[:500])
                 except Exception:
                     pass
+                alloc_failed = True
+                break
 
-        # Fallback if no invoice_lines and no advance_lines (e.g. empty invoice_allocations / On-Account payment)
-        if not invoice_lines and not advance_lines:
-            receipt_amt = _safe_float(r.get("customer_ledger_amount") or r.get("amount"))
+        if alloc_failed:
+            continue
+
+        # Fallback if no invoice_lines and no advance_lines ONLY when voucher had no invoice allocations
+        if not allocs and not invoice_lines and not advance_lines:
+            receipt_amt = cust_gross_amt if cust_gross_amt > 0 else _safe_float(r.get("amount"))
             if receipt_amt > 0:
                 ref_cand = (str(r.get("against_reference") or r.get("reference_number") or "")).strip()
                 matched_inv, match_reason = _resolve_invoice(
@@ -1744,24 +1904,46 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                     amount=receipt_amt,
                     narration=r.get("narration") or "",
                     exclude_invoice_ids=used_invoice_ids,
-                    receipt_date=receipt_date_iso or r.get("date") or ""
+                    receipt_date=receipt_date_iso or r.get("date") or "",
+                    net_amount=bank_net_amt
                 )
                 if matched_inv:
                     zoho_invoice_id = matched_inv.get("invoice_id")
-                    used_invoice_ids.add(zoho_invoice_id)
+                    if not matched_inv.get("is_ob"):
+                        used_invoice_ids.add(zoho_invoice_id)
                     inv_cust_id = matched_inv.get("customer_id")
                     if inv_cust_id:
                         payment_customer_id = inv_cust_id
                     inv_no = matched_inv.get("invoice_number", "")
-                    _emit(f"Receipt {receipt_no}: [{match_reason}] Matched Invoice in Zoho '{inv_no}' (ID: {zoho_invoice_id}) (₹{receipt_amt:,.2f})")
-                    curr_sum += receipt_amt
-                    invoice_lines.append({"invoice_id": zoho_invoice_id, "amount_applied": receipt_amt, "ref": ref_cand or receipt_no, "bucket": "current"})
+                    inv_app_amt = receipt_amt
+                    _emit(f"Receipt {receipt_no}: [{match_reason}] Matched Invoice in Zoho '{inv_no}' (ID: {zoho_invoice_id}) (₹{inv_app_amt:,.2f})")
+                    curr_sum += inv_app_amt
+                    invoice_lines.append({"invoice_id": zoho_invoice_id, "amount_applied": inv_app_amt, "ref": ref_cand or receipt_no, "bucket": "current"})
                 else:
-                    _emit(f"Receipt {receipt_no}: Unallocated payment, creating On-Account Customer Payment for '{customer_name}' (₹{receipt_amt:,.2f})")
-                    advance_lines.append({"ref": ref_cand or receipt_no or "On Account", "amount": receipt_amt})
-
-        bank_account_name = (r.get("bank_account") or "").strip()
-        account_id = _get_account_id(bank_account_name)
+                    # STRICT RULE: Do NOT insert if amount is not matching in Zoho Books!
+                    ob_inv = _get_customer_ob_invoice(customer_id)
+                    ob_info_str = f", Zoho Opening Balance is ₹{float(ob_inv.get('total') or 0):,.2f}" if ob_inv else ""
+                    err_msg = f"Amount mismatch or Invoice not found for customer '{customer_name}' (Receipt Amount: ₹{receipt_amt:,.2f}{ob_info_str})"
+                    _emit(f"Receipt {receipt_no}: [STRICT RULE] {err_msg}")
+                    stats["failed"] += 1
+                    errors.append({
+                        "receipt_number": receipt_no,
+                        "date": receipt_date_iso,
+                        "customer": customer_name,
+                        "payment_mode": r.get("payment_mode") or "Bank Transfer",
+                        "amount": receipt_amt,
+                        "bank_account": bank_account_name,
+                        "reference_number": ref_cand or receipt_no,
+                        "description": r.get("narration") or "",
+                        "Invoice Numbers": ref_cand or "N/A",
+                        "Type": "Amount Mismatch / Invoice Not Found",
+                        "error": err_msg
+                    })
+                    try:
+                        database_manager.update_receipt_status(receipt_no, zoho_payment_id=None, zoho_status='failed', zoho_error=err_msg[:500])
+                    except Exception:
+                        pass
+                    continue
 
         # Build and submit ONE customer payment (accumulated)
         total_payment = prev_sum + curr_sum
@@ -1778,20 +1960,108 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                 else:
                     ref_no = receipt_no
 
+            # Apportion TDS and Net Bank Amount across invoice lines
+            total_gross = sum(_safe_float(x.get("amount_applied")) for x in invoice_lines)
+            if tds_amt > 0 and total_gross > 0:
+                for x in invoice_lines:
+                    gross = _safe_float(x.get("amount_applied"))
+                    line_tds = round(tds_amt * (gross / total_gross), 2)
+                    line_bank = round(gross - line_tds, 2)
+                    x["line_tds"] = line_tds
+                    x["line_bank"] = line_bank
+
+                # Ensure penny rounding sum matches tds_amt
+                sum_tds = sum(x["line_tds"] for x in invoice_lines)
+                diff_tds = round(tds_amt - sum_tds, 2)
+                invoice_lines[-1]["line_tds"] = round(invoice_lines[-1]["line_tds"] + diff_tds, 2)
+                invoice_lines[-1]["line_bank"] = round(_safe_float(invoice_lines[-1].get("amount_applied")) - invoice_lines[-1]["line_tds"], 2)
+
+                payment_bank_amt = round(sum(x["line_bank"] for x in invoice_lines), 2)
+            else:
+                for x in invoice_lines:
+                    x["line_tds"] = 0.0
+                    x["line_bank"] = round(_safe_float(x.get("amount_applied")), 2)
+                payment_bank_amt = round(total_payment, 2)
+
+            # Consolidate by invoice_id to prevent "Invoices should not be present more than once in the payment"
+            consolidated_invoices = {}
+            for x in invoice_lines:
+                iid = x["invoice_id"]
+                if iid not in consolidated_invoices:
+                    consolidated_invoices[iid] = {
+                        "invoice_id": iid,
+                        "amount_applied": round(x["line_bank"], 2),
+                        "tax_amount_withheld": round(x.get("line_tds", 0), 2)
+                    }
+                else:
+                    consolidated_invoices[iid]["amount_applied"] = round(consolidated_invoices[iid]["amount_applied"] + x["line_bank"], 2)
+                    consolidated_invoices[iid]["tax_amount_withheld"] = round(consolidated_invoices[iid]["tax_amount_withheld"] + x.get("line_tds", 0), 2)
+
+            # If consolidated applied amount exceeds invoice balance, cap it to prevent Zoho error 24016
+            for iid, inv_data in consolidated_invoices.items():
+                target_inv = next((ci for ci in all_zoho_invoices_cache if ci.get("invoice_id") == iid), None)
+                if not target_inv:
+                    for cid, ob in _customer_ob_cache.items():
+                        if ob and ob.get("invoice_id") == iid:
+                            target_inv = ob
+                            break
+                if target_inv:
+                    inv_bal = float(target_inv.get("balance") or target_inv.get("total") or 0.0)
+                    tot_applied = inv_data["amount_applied"] + inv_data.get("tax_amount_withheld", 0.0)
+                    if inv_bal > 0 and tot_applied > inv_bal:
+                        excess = tot_applied - inv_bal
+                        inv_data["amount_applied"] = max(0.0, round(inv_data["amount_applied"] - excess, 2))
+
+            invoices_payload = []
+            for iid, inv_data in consolidated_invoices.items():
+                app_amt = float(inv_data.get("amount_applied") or 0.0)
+                if app_amt > 0:
+                    item = {
+                        "invoice_id": iid,
+                        "amount_applied": app_amt
+                    }
+                    if inv_data.get("tax_amount_withheld", 0) > 0:
+                        item["tax_amount_withheld"] = inv_data["tax_amount_withheld"]
+                    invoices_payload.append(item)
+
             payload = {
                 "customer_id": payment_customer_id,
                 "payment_mode": "banktransfer" if (r.get("payment_mode") or "").lower().startswith("bank") else "cash",
-                "amount": round(total_payment, 2),
+                "amount": payment_bank_amt,
                 "date": receipt_date_iso or datetime.now().strftime("%Y-%m-%d"),
                 "payment_number": receipt_no,
                 "reference_number": str(ref_no or receipt_no)[:45],
                 "description": (r.get("narration") or "").strip(),
-                "invoices": [{"invoice_id": x["invoice_id"], "amount_applied": round(_safe_float(x["amount_applied"]), 2)} for x in invoice_lines],
             }
+            if invoices_payload:
+                payload["invoices"] = invoices_payload
             if account_id:
                 payload["account_id"] = account_id
 
+            if tds_amt > 0:
+                tds_acc_id = _get_tds_account_id(tds_ledger_name, receipt_date_iso or r.get("date") or "")
+                if tds_acc_id:
+                    payload["tax_account_id"] = tds_acc_id
+
             resp = zoho.api_call("POST", "/customerpayments", payload=payload)
+
+            # Self-healing retry for Zoho error 24016 (invoice balance discrepancy)
+            if resp.get("code") == 24016 and invoices_payload:
+                _emit(f"Receipt {receipt_no}: Retrying with live invoice balance check...")
+                new_invoices = []
+                for item in invoices_payload:
+                    iid = item["invoice_id"]
+                    live_res = zoho.api_call("GET", f"/invoices/{iid}")
+                    if live_res.get("code") == 0:
+                        live_bal = float(live_res.get("invoice", {}).get("balance") or 0.0)
+                        if live_bal > 0:
+                            item["amount_applied"] = min(item["amount_applied"], live_bal)
+                            new_invoices.append(item)
+                if new_invoices:
+                    payload["invoices"] = new_invoices
+                else:
+                    payload.pop("invoices", None)
+                resp = zoho.api_call("POST", "/customerpayments", payload=payload)
             if resp.get("code") == 0:
                 stats["payments_created"] += 1
                 zoho_pid = (resp.get('payment', {}) or resp.get('customerpayment', {}) or {}).get('payment_id', '')
@@ -1800,7 +2070,21 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
                         zoho.api_call("PUT", f"/customerpayments/{zoho_pid}", payload={"payment_number": receipt_no, "reference_number": receipt_no})
                     except Exception:
                         pass
-                _emit(f"[{idx}/{stats['total']}] Invoice Payment created: receipt {receipt_no} amount={round(total_payment,2)} -> Zoho ID: {zoho_pid}")
+
+                # Update in-memory invoice cache balance
+                for x in invoice_lines:
+                    iid = x.get("invoice_id")
+                    g_applied = _safe_float(x.get("amount_applied"))
+                    for ci in all_zoho_invoices_cache:
+                        if ci.get("invoice_id") == iid:
+                            cur_bal = float(ci.get("balance") or ci.get("total") or 0.0)
+                            new_bal = max(0.0, cur_bal - g_applied)
+                            ci["balance"] = new_bal
+                            if new_bal <= 0:
+                                ci["status"] = "paid"
+                            break
+
+                _emit(f"[{idx}/{stats['total']}] Invoice Payment created: receipt {receipt_no} bank_amt={payment_bank_amt} (TDS={tds_amt}) -> Zoho ID: {zoho_pid}")
                 try:
                     database_manager.update_receipt_status(receipt_no, zoho_payment_id=str(zoho_pid), zoho_status='synced', zoho_error=None)
                 except Exception:
@@ -1821,10 +2105,11 @@ def sync_receipts_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
             if _should_stop(stop_event):
                 _emit("Stopped by user.")
                 break
+            adv_amt = round(_safe_float(adv.get("amount")), 2)
             payload = {
                 "customer_id": payment_customer_id,
                 "payment_mode": "banktransfer" if (r.get("payment_mode") or "").lower().startswith("bank") else "cash",
-                "amount": round(_safe_float(adv.get("amount")), 2),
+                "amount": adv_amt,
                 "date": receipt_date_iso or datetime.now().strftime("%Y-%m-%d"),
                 "payment_number": receipt_no,
                 "reference_number": str(adv.get("ref") or receipt_no)[:100],

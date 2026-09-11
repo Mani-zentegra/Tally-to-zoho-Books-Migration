@@ -7,6 +7,7 @@ import re
 import time
 import io
 import threading
+from datetime import datetime
 
 # Reconfigure stdout/stderr for UTF-8 on Windows terminal
 try:
@@ -5886,6 +5887,8 @@ def api_sync_receipts():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+_last_receipts_sync_report = None
+
 @app.route('/api/receipts/zoho/sync/start', methods=['POST'])
 def api_receipts_zoho_sync_start():
     if not receipts_module:
@@ -5929,12 +5932,89 @@ def api_receipts_zoho_sync_start():
                 job_manager.finish(job.id, "stopped", result=res, message="Stopped by user")
             else:
                 job_manager.finish(job.id, "error", result=res, message=(res or {}).get("message", "Failed"))
+
+            # Save last sync report for persistence across page reloads
+            try:
+                global _last_receipts_sync_report
+                _last_receipts_sync_report = {
+                    "result": res,
+                    "timestamp": datetime.now().isoformat()
+                }
+                cache_file = os.path.join(os.path.dirname(__file__), ".last_receipts_sync_report.json")
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(_last_receipts_sync_report, f, default=str)
+            except Exception:
+                pass
         except Exception as e:
             job.log(f"Unhandled error: {e}")
             job_manager.finish(job.id, "error", result={"status": "error", "message": str(e)}, message=str(e))
 
     threading.Thread(target=_runner, daemon=True).start()
     return jsonify({"status": "success", "job_id": job.id})
+
+
+@app.route('/api/receipts/last_sync_report', methods=['GET'])
+def api_receipts_last_sync_report():
+    """Returns the last receipts sync report (from file/memory cache or reconstructed from DB)."""
+    try:
+        global _last_receipts_sync_report
+        cache_file = os.path.join(os.path.dirname(__file__), ".last_receipts_sync_report.json")
+        
+        if not _last_receipts_sync_report:
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        _last_receipts_sync_report = json.load(f)
+                except Exception:
+                    _last_receipts_sync_report = None
+
+        if _last_receipts_sync_report and isinstance(_last_receipts_sync_report, dict):
+            cached_res = _last_receipts_sync_report.get("result") or {}
+            ts = _last_receipts_sync_report.get("timestamp")
+            if cached_res:
+                return jsonify({
+                    "status": "success",
+                    "stats": cached_res.get("stats", {}),
+                    "errors": cached_res.get("errors", []),
+                    "timestamp": ts,
+                    "is_from_db": False
+                })
+
+        # Fallback: Reconstruct report from SQLite DB receipts table
+        if database_manager:
+            database_manager.init_db()
+            all_recs = database_manager.get_all_receipts() or []
+            failed_recs = [r for r in all_recs if (isinstance(r, dict) and (r.get("zoho_status") in ("failed", "error") or r.get("zoho_error")))]
+            synced_recs = [r for r in all_recs if (isinstance(r, dict) and (r.get("zoho_status") == "synced" or r.get("zoho_payment_id")))]
+
+            errors = []
+            for r in failed_recs:
+                errors.append({
+                    "receipt_number": r.get("receipt_number", ""),
+                    "customer": r.get("customer_name", ""),
+                    "amount": float(r.get("amount") or 0),
+                    "Invoice Numbers": r.get("against_reference") or r.get("reference_number") or "N/A",
+                    "Type": "Amount Mismatch / Invoice Not Found",
+                    "error": r.get("zoho_error") or "Sync Failed"
+                })
+
+            return jsonify({
+                "status": "success",
+                "stats": {
+                    "total": len(all_recs),
+                    "payments_created": len(synced_recs),
+                    "advances_created": 0,
+                    "already_synced": 0,
+                    "failed": len(failed_recs)
+                },
+                "errors": errors,
+                "timestamp": datetime.now().isoformat(),
+                "is_from_db": True
+            })
+
+        return jsonify({"status": "error", "message": "No sync report found."}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/receipts/export_sync_errors_excel', methods=['POST', 'GET'])
 def api_export_receipts_sync_errors_excel():

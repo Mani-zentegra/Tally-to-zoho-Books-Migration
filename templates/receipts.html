@@ -169,6 +169,9 @@
                 <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
                 <span class="fw-semibold">Sync to Zoho Books</span>
                 <div class="d-flex gap-2 ms-auto flex-wrap">
+                    <button onclick="viewLastSyncReport()" id="btnViewLastReport" class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" title="View Last Zoho Sync Report & Errors">
+                        <i class="bi bi-file-earmark-bar-graph"></i> View Last Report
+                    </button>
                     <button onclick="downloadSyncErrorsExcel()" class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" title="Download Sync Error Report">
                         <i class="bi bi-file-earmark-excel"></i> Download Error Excel
                     </button>
@@ -465,6 +468,14 @@
 
         // Load data on startup - try database first, then localStorage
         document.addEventListener('DOMContentLoaded', async () => {
+            // Restore last sync report from localStorage
+            try {
+                const saved = localStorage.getItem('receipts_last_sync_report');
+                if (saved) {
+                    lastSyncResult = JSON.parse(saved);
+                }
+            } catch (e) {}
+
             try {
                 const res = await fetch('/api/db/receipts');
                 if (res.ok) {
@@ -854,10 +865,7 @@
                 await _startReceiptsJob('/api/receipts/zoho/sync/start', {
                     receipt_numbers: receiptNumbers
                 }, async (result) => {
-                    lastSyncResult = result;
-                    if (result && (result.stats || result.errors)) {
-                        showSyncReportModal(result);
-                    }
+                    saveAndShowSyncReport(result);
                     try {
                         const dbRes = await fetch('/api/db/receipts');
                         if (dbRes.ok) {
@@ -897,10 +905,7 @@
                 await _startReceiptsJob('/api/receipts/zoho/sync/start', {
                     receipt_numbers: receiptNumbers
                 }, async (result) => {
-                    lastSyncResult = result;
-                    if (result && (result.stats || result.errors)) {
-                        showSyncReportModal(result);
-                    }
+                    saveAndShowSyncReport(result);
                     try {
                         const dbRes = await fetch('/api/db/receipts');
                         if (dbRes.ok) {
@@ -1181,12 +1186,74 @@
             }
         }
 
+        function saveAndShowSyncReport(result) {
+            if (!result) return;
+            lastSyncResult = result;
+            try {
+                result.saved_at = new Date().toLocaleString();
+                result.timestamp = result.timestamp || new Date().toISOString();
+                localStorage.setItem('receipts_last_sync_report', JSON.stringify(result));
+            } catch (e) {}
+            if (result.stats || (result.errors && result.errors.length > 0)) {
+                showSyncReportModal(result);
+            }
+        }
+
+        async function viewLastSyncReport() {
+            // 1. Check in-memory result
+            if (lastSyncResult && (lastSyncResult.stats || (lastSyncResult.errors && lastSyncResult.errors.length > 0))) {
+                showSyncReportModal(lastSyncResult);
+                return;
+            }
+
+            // 2. Check localStorage
+            try {
+                const saved = localStorage.getItem('receipts_last_sync_report');
+                if (saved) {
+                    lastSyncResult = JSON.parse(saved);
+                    if (lastSyncResult && (lastSyncResult.stats || (lastSyncResult.errors && lastSyncResult.errors.length > 0))) {
+                        showSyncReportModal(lastSyncResult);
+                        return;
+                    }
+                }
+            } catch (e) {}
+
+            // 3. Fallback: Fetch from backend endpoint /api/receipts/last_sync_report
+            const btn = document.getElementById('btnViewLastReport');
+            const origHtml = btn ? btn.innerHTML : '';
+            if (btn) btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Loading...';
+
+            try {
+                const res = await fetch('/api/receipts/last_sync_report');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && (data.stats || (data.errors && data.errors.length > 0))) {
+                        lastSyncResult = data;
+                        try {
+                            localStorage.setItem('receipts_last_sync_report', JSON.stringify(data));
+                        } catch (e) {}
+                        showSyncReportModal(data);
+                        return;
+                    }
+                }
+                alert('No sync report found. Please run a sync first.');
+            } catch (err) {
+                alert('Failed to load last sync report: ' + (err.message || err));
+            } finally {
+                if (btn) btn.innerHTML = origHtml;
+            }
+        }
+
         function showSyncReportModal(data) {
             const modalEl = document.getElementById('syncReportModal');
             if (!modalEl) return;
 
             const stats = data.stats || {};
             const errors = data.errors || [];
+            const reportTime = data.timestamp ? new Date(data.timestamp).toLocaleString() : (data.saved_at || new Date().toLocaleString());
+            const sourceBadge = data.is_from_db ? 
+                '<span class="badge bg-secondary"><i class="bi bi-database me-1"></i>Current DB Status</span>' : 
+                '<span class="badge bg-success"><i class="bi bi-check2-all me-1"></i>Latest Sync Batch</span>';
 
             // Build missing customers summary (only for actual missing customer errors)
             const missingCustomersMap = {};
@@ -1217,6 +1284,11 @@
             ).join('');
 
             document.getElementById('syncReportBody').innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
+                    <span class="text-muted small"><i class="bi bi-clock-history me-1"></i>Report Time: <strong>${reportTime}</strong></span>
+                    ${sourceBadge}
+                </div>
+
                 <div class="row g-3 mb-4">
                     <div class="col-4">
                         <div class="border rounded-3 p-3 text-center bg-light">
@@ -1262,7 +1334,18 @@
 
         async function downloadSyncErrorsExcel() {
             try {
-                const errors = lastSyncResult ? (lastSyncResult.errors || []) : [];
+                let errors = lastSyncResult ? (lastSyncResult.errors || []) : [];
+                if (!errors.length) {
+                    try {
+                        const saved = localStorage.getItem('receipts_last_sync_report');
+                        if (saved) {
+                            const parsed = JSON.parse(saved);
+                            if (parsed && parsed.errors && parsed.errors.length > 0) {
+                                errors = parsed.errors;
+                            }
+                        }
+                    } catch (e) {}
+                }
 
                 const res = await fetch('/api/receipts/export_sync_errors_excel', {
                     method: 'POST',
@@ -1664,10 +1747,7 @@
               to_date: toDate,
               limit: limit ? parseInt(limit) : null,
             }, async (result) => {
-              lastSyncResult = result;
-              if (result && (result.stats || result.errors)) {
-                showSyncReportModal(result);
-              }
+              saveAndShowSyncReport(result);
               // Reload from DB to get updated zoho_status
               try {
                 const dbRes = await fetch('/api/db/receipts');
