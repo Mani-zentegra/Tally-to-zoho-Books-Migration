@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banking Transactions - Tally to Zoho Migration</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    {% include '_sidebar_styles.html' %}
+    {% include '_zb_theme.html' %}
+    <style>
+        .month-pill {
+            display: inline-block;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 20px;
+            border: 1px solid #dee2e6;
+            background: #fff;
+            color: #495057;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+        }
+        .month-pill:hover {
+            background: #e9ecef;
+            border-color: #ced4da;
+            color: #212529;
+        }
+        .month-pill.active {
+            background: #0288d1;
+            border-color: #0288d1;
+            color: #fff !important;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(2,136,209,0.3);
+        }
+        .kpi-card {
+            border-radius: 12px;
+            border-left: 4px solid #0288d1;
+            background: #fff;
+            padding: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            height: 100%;
+        }
+        .kpi-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6c757d;
+            margin-bottom: 4px;
+        }
+        .kpi-value {
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .group-badge {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+        .badge-credit-cards { background-color: #fce4ec; color: #c2185b; border: 1px solid #f8bbd0; }
+        .badge-duties-taxes { background-color: #ede7f6; color: #512da8; border: 1px solid #d1c4e9; }
+        .badge-provisions { background-color: #e0f2f1; color: #00796b; border: 1px solid #b2dfdb; }
+        .badge-capital { background-color: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; }
+        .badge-loans { background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
+        .badge-default { background-color: #f5f5f5; color: #616161; border: 1px solid #e0e0e0; }
+        .table th {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #495057;
+            background-color: #f8f9fa;
+        }
+        .table td {
+            font-size: 13px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    {% set active_page = 'banking' %}
+    <div class="app-shell">
+        {% include '_sidebar.html' %}
+        <main class="main" style="min-width: 0; overflow-x: hidden;">
+            {% set page_title = 'Banking' %}
+            {% set page_subtitle = 'Manage non-expense bank transactions: credit cards, statutory payments, provisions, loans & drawings.' %}
+            {% include '_topbar.html' %}
+
+            <div class="container-fluid p-0">
+            {% set steps_title = 'Banking: Recommended Migration Steps' %}
+            {% set steps = [
+              'Review non-expense payment vouchers separated from company expenses.',
+              'Verify parent groups (Credit Cards, Duties & Taxes, Provisions, Capital Accounts, Loans).',
+              'Filter transactions by Financial Year & Month or search by account/reference.',
+              'Sync to Zoho Books as Bank Transactions / Fund Transfers and export error reports.'
+            ] %}
+            {% include '_steps_card.html' %}
+
+            <!-- LIVE CONSOLE -->
+            <div id="bankingConsoleCard" class="content-card p-3 mb-4 shadow-sm" style="display: none;">
+                <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-2">
+                    <div class="fw-semibold text-dark d-flex align-items-center gap-2">
+                        <i class="bi bi-terminal text-primary fs-5"></i>
+                        <span>Live Banking Sync Console</span>
+                        <span id="bankingConsoleStatus" class="badge bg-secondary ms-1">Idle</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <button id="bankingStopBtn" class="btn btn-sm btn-outline-danger" onclick="stopBankingJob()" disabled>
+                            <i class="bi bi-stop-circle me-1"></i> Stop Job
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="clearBankingConsole()">
+                            <i class="bi bi-trash3 me-1"></i> Clear
+                        </button>
+                        <button class="btn btn-sm btn-light border" onclick="showBankingConsole(false)" title="Hide Console">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                </div>
+                <pre id="bankingConsole" class="terminal-console mb-0" style="background:#1e1e1e;color:#d4d4d4;font-family:monospace;font-size:12.5px;line-height:1.5;padding:14px;border-radius:8px;max-height:280px;overflow-y:auto;white-space:pre-wrap;"></pre>
+            </div>
+
+            <!-- STEP 3 — SYNC TO ZOHO -->
+            <div class="content-card mb-3 border-start border-4" style="border-color:#2e7d32 !important;">
+                <div class="p-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <span class="badge rounded-pill text-white fw-bold px-3 py-2" style="background:#2e7d32;font-size:13px;">STEP 3</span>
+                        <span class="fw-semibold">Sync to Zoho Books (Bank Transactions / Fund Transfers)</span>
+                    </div>
+                    <div class="d-flex gap-2 flex-wrap align-items-center">
+                        <button onclick="downloadSyncErrorsExcel()" class="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" title="Download Sync Error Report">
+                            <i class="bi bi-file-earmark-excel"></i> Download Error Excel
+                        </button>
+                        <button onclick="syncSelected()" id="syncSelectedBtn" class="btn btn-success btn-sm d-flex align-items-center gap-1" disabled>
+                            <i class="bi bi-cloud-upload"></i> Sync Selected (<span id="btnSelectCount">0</span>)
+                        </button>
+                        <button onclick="syncFilteredMonth()" id="syncMonthBtn" class="btn btn-outline-success btn-sm d-flex align-items-center gap-1">
+                            <i class="bi bi-calendar2-check"></i> Sync Filtered Month
+                        </button>
+                        <button onclick="syncAllBanking()" id="syncAllBtn" class="btn btn-dark btn-sm d-flex align-items-center gap-1">
+                            <i class="bi bi-arrow-repeat"></i> Sync All Banking
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FILTER BAR & KPI CARDS -->
+            <div class="content-card mb-4 p-3 shadow-sm">
+                <!-- Month / Year Filter Pills -->
+                <div class="d-flex align-items-center gap-2 mb-3 p-2 bg-light rounded-3 border" id="monthPillsRow" style="min-width: 0;">
+                    <span class="text-muted small fw-bold text-nowrap ms-1"><i class="bi bi-calendar3 me-1"></i>Filter Month:</span>
+                    <select id="yearPillSelect" class="form-select form-select-sm border-secondary fw-semibold text-primary" style="width: auto; min-width: 120px;" onchange="onYearPillSelectChange(this.value)">
+                        <option value="ALL">All Years</option>
+                    </select>
+
+                    <button id="allMonthsPillBtn" class="month-pill fw-bold flex-shrink-0 active" onclick="quickMonth('ALL')">ALL (All Months)</button>
+
+                    <div id="monthPillsContainer" class="d-flex align-items-center gap-1 overflow-auto flex-grow-1 py-1" style="min-width: 0; white-space: nowrap; scrollbar-width: thin;">
+                        <!-- Dynamic Month Pills inserted here -->
+                    </div>
+
+                    <button class="btn btn-sm btn-outline-secondary text-nowrap flex-shrink-0 ms-1" onclick="clearMonthFilter()">
+                        <i class="bi bi-x-circle me-1"></i>Clear
+                    </button>
+                </div>
+
+                <!-- KPI Cards -->
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#0288d1">
+                            <div class="kpi-label">Total Banking Vouchers</div>
+                            <div class="kpi-value text-primary" id="kpi-total-count">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#2e7d32">
+                            <div class="kpi-label">Total Amount Paid</div>
+                            <div class="kpi-value text-success" id="kpi-total-amount">₹0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#388e3c">
+                            <div class="kpi-label"><i class="bi bi-check-circle me-1 text-success"></i>Synced to Zoho</div>
+                            <div class="kpi-value text-success" id="kpi-synced-count">0</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="kpi-card" style="border-color:#f57c00">
+                            <div class="kpi-label"><i class="bi bi-clock me-1 text-warning"></i>Pending Sync</div>
+                            <div class="kpi-value text-warning" id="kpi-pending-count">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DATA TABLE CARD -->
+            <div class="content-card mb-4 shadow-sm">
+                <!-- Toolbar -->
+                <div class="p-3 border-bottom d-flex flex-wrap gap-2 align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <div class="input-group input-group-sm" style="width: 260px;">
+                            <span class="input-group-text bg-light"><i class="bi bi-search"></i></span>
+                            <input type="text" id="searchInput" class="form-control" placeholder="Search account, voucher, ref..." oninput="applyFilters()">
+                        </div>
+
+                        <select id="groupFilter" class="form-select form-select-sm" style="width: 170px;" onchange="applyFilters()">
+                            <option value="ALL">All Parent Groups</option>
+                        </select>
+
+                        <select id="zohoStatusFilter" class="form-select form-select-sm" style="width: 140px;" onchange="applyFilters()">
+                            <option value="ALL">All Status</option>
+                            <option value="SYNCED">Synced</option>
+                            <option value="PENDING">Pending</option>
+                        </select>
+
+                        <button class="btn btn-sm btn-outline-secondary" onclick="loadBankingData()" title="Reload Data">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <button class="btn btn-sm btn-outline-success fw-semibold" onclick="exportToExcel()">
+                            <i class="bi bi-file-earmark-excel me-1"></i> Export Excel
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="markSelectedStatus('synced')">
+                            <i class="bi bi-check2-circle me-1"></i> Mark Synced
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="markSelectedStatus('pending')">
+                            <i class="bi bi-clock-history me-1"></i> Mark Pending
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Active Filter summary banner -->
+                <div id="filterBanner" class="px-3 py-2 bg-light border-bottom small text-muted d-flex justify-content-between align-items-center" style="display: none !important;">
+                    <span id="filterSummaryText">Showing all records</span>
+                    <span id="filteredAmountSummary" class="fw-bold text-dark">Total: ₹0.00</span>
+                </div>
+
+                <!-- Table -->
+                <div class="table-responsive" style="max-height: 600px;">
+                    <table class="table table-hover table-striped align-middle mb-0">
+                        <thead class="sticky-top bg-light">
+                            <tr>
+                                <th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" class="form-check-input" onchange="toggleSelectAll(this.checked)"></th>
+                                <th style="width: 130px;">Voucher #</th>
+                                <th style="width: 100px;">Date</th>
+                                <th>Account / Ledger</th>
+                                <th style="width: 160px;">Parent Group</th>
+                                <th style="width: 160px;">Paid Through</th>
+                                <th style="width: 130px;" class="text-end">Amount (₹)</th>
+                                <th style="width: 110px;">Ref #</th>
+                                <th style="width: 100px;" class="text-center">Zoho Status</th>
+                                <th style="width: 60px;" class="text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bankingTableBody">
+                            <tr>
+                                <td colspan="10" class="text-center py-5 text-muted">
+                                    <div class="spinner-border spinner-border-sm text-primary me-2"></div>
+                                    Loading Banking Transactions...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Footer / Record Count -->
+                <div class="p-3 border-top d-flex justify-content-between align-items-center text-muted small">
+                    <div>
+                        Showing <span id="showingCount" class="fw-semibold text-dark">0</span> of <span id="totalCount" class="fw-semibold text-dark">0</span> records
+                    </div>
+                    <div id="selectedCountBadge" class="badge bg-primary px-3 py-2" style="display: none;">
+                        <span id="selectedCount">0</span> selected
+                    </div>
+                </div>
+            </div>
+            </div><!-- /.container-fluid -->
+        </main>
+    </div>
+
+    <!-- VOUCHER DETAILS MODAL -->
+    <div class="modal fade" id="voucherDetailsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title fs-6"><i class="bi bi-receipt me-2"></i>Banking Voucher Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4" id="voucherModalBody">
+                    <!-- Dynamic details populated here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let allBanking = [];
+        let filteredBanking = [];
+        let activeMonth = 'ALL';
+        let selectedYearFilter = 'ALL';
+        let allUniqueYears = [];
+        let allUniqueYmList = [];
+        let selectedVouchers = new Set();
+        let detailsModalInstance = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            detailsModalInstance = new bootstrap.Modal(document.getElementById('voucherDetailsModal'));
+            await loadBankingData();
+        });
+
+        async function loadBankingData() {
+            const tbody = document.getElementById('bankingTableBody');
+            tbody.innerHTML = `<tr><td colspan="10" class="text-center py-5 text-muted"><div class="spinner-border spinner-border-sm text-primary me-2"></div>Loading Banking Transactions...</td></tr>`;
+            try {
+                const res = await fetch('/api/db/banking');
+                if (res.ok) {
+                    const data = await res.json();
+                    allBanking = data.banking || [];
+                    buildGroupFilterOptions();
+                    buildMonthPills();
+                    applyFilters();
+                } else {
+                    tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-danger">Failed to load banking data.</td></tr>`;
+                }
+            } catch (err) {
+                console.error("Error fetching banking data:", err);
+                tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-danger">Error: ${err.message}</td></tr>`;
+            }
+        }
+
+        function getNormalizedDate(raw) {
+            if (!raw) return '';
+            const s = String(raw).replace(/-/g, '').trim();
+            return s.length >= 8 ? s.slice(0, 8) : s;
+        }
+
+        function formatDate(d) {
+            if (!d) return '';
+            const s = String(d).replace(/-/g, '').trim();
+            if (s.length === 8) {
+                return s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
+            }
+            return d;
+        }
+
+        function formatCurrency(num) {
+            return '₹' + Number(num || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function buildGroupFilterOptions() {
+            const groupSelect = document.getElementById('groupFilter');
+            const groups = new Set();
+            allBanking.forEach(p => {
+                const parent = (p.ledger_parent || '').trim();
+                if (parent) groups.add(parent);
+            });
+
+            const sortedGroups = Array.from(groups).sort();
+            groupSelect.innerHTML = '<option value="ALL">All Parent Groups</option>';
+            sortedGroups.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.toLowerCase();
+                opt.textContent = g;
+                groupSelect.appendChild(opt);
+            });
+        }
+
+        function getGroupBadgeClass(group) {
+            const g = (group || '').toLowerCase();
+            if (g.includes('credit card')) return 'badge-credit-cards';
+            if (g.includes('duties') || g.includes('tax')) return 'badge-duties-taxes';
+            if (g.includes('provision')) return 'badge-provisions';
+            if (g.includes('capital')) return 'badge-capital';
+            if (g.includes('loan')) return 'badge-loans';
+            return 'badge-default';
+        }
+
+        function buildMonthPills() {
+            const ymSet = new Set();
+            const yearSet = new Set();
+
+            (allBanking || []).forEach(p => {
+                const d = getNormalizedDate(p.date);
+                if (d && d.length >= 6) {
+                    ymSet.add(d.slice(0, 6));
+                    yearSet.add(d.slice(0, 4));
+                }
+            });
+
+            allUniqueYmList = Array.from(ymSet).sort();
+            allUniqueYears = Array.from(yearSet).sort();
+
+            const yearSelect = document.getElementById('yearPillSelect');
+            if (yearSelect) {
+                yearSelect.innerHTML = '<option value="ALL">All Years (' + allUniqueYears.length + ')</option>';
+                allUniqueYears.forEach(y => {
+                    const opt = document.createElement('option');
+                    opt.value = y;
+                    opt.textContent = 'Year ' + y;
+                    yearSelect.appendChild(opt);
+                });
+                yearSelect.value = selectedYearFilter;
+            }
+
+            renderMonthPills();
+        }
+
+        function renderMonthPills() {
+            const container = document.getElementById('monthPillsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+
+            const months = [
+                { num: '01', name: 'Jan' }, { num: '02', name: 'Feb' }, { num: '03', name: 'Mar' },
+                { num: '04', name: 'Apr' }, { num: '05', name: 'May' }, { num: '06', name: 'Jun' },
+                { num: '07', name: 'Jul' }, { num: '08', name: 'Aug' }, { num: '09', name: 'Sep' },
+                { num: '10', name: 'Oct' }, { num: '11', name: 'Nov' }, { num: '12', name: 'Dec' }
+            ];
+
+            let ymsToShow = [];
+            if (selectedYearFilter === 'ALL') {
+                ymsToShow = allUniqueYmList;
+            } else {
+                months.forEach(m => {
+                    const ym = `${selectedYearFilter}${m.num}`;
+                    if (allUniqueYmList.includes(ym)) {
+                        ymsToShow.push(ym);
+                    }
+                });
+            }
+
+            const monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+            ymsToShow.forEach(ym => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'month-pill flex-shrink-0' + (activeMonth === ym ? ' active' : '');
+                const mNum = parseInt(ym.slice(4, 6), 10);
+                const yr = ym.slice(0, 4);
+                btn.textContent = `${monthNames[mNum]} '${yr.slice(2)}`;
+                btn.onclick = () => quickMonth(ym);
+                container.appendChild(btn);
+            });
+        }
+
+        function onYearPillSelectChange(year) {
+            selectedYearFilter = year;
+            activeMonth = 'ALL';
+            document.getElementById('allMonthsPillBtn')?.classList.add('active');
+            renderMonthPills();
+            applyFilters();
+        }
+
+        function quickMonth(ym) {
+            activeMonth = ym;
+            document.querySelectorAll('.month-pill').forEach(btn => btn.classList.remove('active'));
+            if (ym === 'ALL') {
+                document.getElementById('allMonthsPillBtn')?.classList.add('active');
+            }
+            renderMonthPills();
+            applyFilters();
+        }
+
+        function clearMonthFilter() {
+            selectedYearFilter = 'ALL';
+            activeMonth = 'ALL';
+            document.getElementById('yearPillSelect').value = 'ALL';
+            document.getElementById('allMonthsPillBtn')?.classList.add('active');
+            renderMonthPills();
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const search = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+            const groupFilter = (document.getElementById('groupFilter')?.value || 'ALL').toLowerCase();
+            const statusFilter = document.getElementById('zohoStatusFilter')?.value || 'ALL';
+
+            let list = allBanking.slice();
+
+            // Period Filter
+            if (activeMonth && activeMonth !== 'ALL') {
+                list = list.filter(p => getNormalizedDate(p.date).startsWith(activeMonth));
+            } else if (selectedYearFilter && selectedYearFilter !== 'ALL') {
+                list = list.filter(p => getNormalizedDate(p.date).startsWith(selectedYearFilter));
+            }
+
+            // Group Filter
+            if (groupFilter !== 'all') {
+                list = list.filter(p => (p.ledger_parent || '').toLowerCase() === groupFilter);
+            }
+
+            // Status Filter
+            if (statusFilter === 'SYNCED') {
+                list = list.filter(p => p.zoho_status === 'synced' || p.zoho_payment_id);
+            } else if (statusFilter === 'PENDING') {
+                list = list.filter(p => p.zoho_status !== 'synced' && !p.zoho_payment_id);
+            }
+
+            // Search
+            if (search) {
+                list = list.filter(p => {
+                    const no = (p.payment_number || '').toLowerCase();
+                    const v = (p.vendor_name || '').toLowerCase();
+                    const g = (p.ledger_parent || '').toLowerCase();
+                    const ref = (p.reference_number || '').toLowerCase();
+                    const bank = (p.bank_account || '').toLowerCase();
+                    return no.includes(search) || v.includes(search) || g.includes(search) || ref.includes(search) || bank.includes(search);
+                });
+            }
+
+            filteredBanking = list;
+            updateKPIs();
+            renderTable();
+        }
+
+        function updateKPIs() {
+            const totalCount = filteredBanking.length;
+            const totalAmt = filteredBanking.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+            const syncedCount = filteredBanking.filter(p => p.zoho_status === 'synced' || p.zoho_payment_id).length;
+            const pendingCount = totalCount - syncedCount;
+
+            document.getElementById('kpi-total-count').textContent = totalCount.toLocaleString();
+            document.getElementById('kpi-total-amount').textContent = formatCurrency(totalAmt);
+            document.getElementById('kpi-synced-count').textContent = syncedCount.toLocaleString();
+            document.getElementById('kpi-pending-count').textContent = pendingCount.toLocaleString();
+
+            document.getElementById('showingCount').textContent = totalCount.toLocaleString();
+            document.getElementById('totalCount').textContent = allBanking.length.toLocaleString();
+
+            const banner = document.getElementById('filterBanner');
+            const hasFilters = activeMonth !== 'ALL' || selectedYearFilter !== 'ALL' || document.getElementById('groupFilter')?.value !== 'ALL' || document.getElementById('zohoStatusFilter')?.value !== 'ALL' || document.getElementById('searchInput')?.value;
+            if (hasFilters) {
+                banner.style.setProperty('display', 'flex', 'important');
+                document.getElementById('filterSummaryText').textContent = `Filtered ${totalCount} of ${allBanking.length} vouchers`;
+                document.getElementById('filteredAmountSummary').textContent = `Total: ${formatCurrency(totalAmt)}`;
+            } else {
+                banner.style.setProperty('display', 'none', 'important');
+            }
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('bankingTableBody');
+            if (!filteredBanking.length) {
+                tbody.innerHTML = `<tr><td colspan="10" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-3 d-block mb-2"></i>No banking vouchers match current filters.</td></tr>`;
+                return;
+            }
+
+            let html = '';
+            filteredBanking.forEach(p => {
+                const pno = p.payment_number || '';
+                const isSelected = selectedVouchers.has(pno);
+                const isSynced = p.zoho_status === 'synced' || p.zoho_payment_id;
+                const statusBadge = isSynced 
+                    ? `<span class="badge bg-success-subtle text-success border border-success-subtle">Synced</span>` 
+                    : `<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Pending</span>`;
+                
+                const groupBadgeClass = getGroupBadgeClass(p.ledger_parent);
+
+                html += `
+                    <tr>
+                        <td><input type="checkbox" class="form-check-input row-chk" value="${pno}" ${isSelected ? 'checked' : ''} onchange="toggleSelectVoucher('${pno}', this.checked)"></td>
+                        <td class="fw-bold text-dark">${pno}</td>
+                        <td class="text-muted text-nowrap">${formatDate(p.date)}</td>
+                        <td class="fw-semibold text-primary">${p.vendor_name || '—'}</td>
+                        <td><span class="group-badge ${groupBadgeClass}">${p.ledger_parent || 'Banking'}</span></td>
+                        <td class="text-muted small">${p.bank_account || '—'}</td>
+                        <td class="text-end fw-bold text-dark">${formatCurrency(p.amount)}</td>
+                        <td class="text-muted small">${p.reference_number || '—'}</td>
+                        <td class="text-center">${statusBadge}</td>
+                        <td class="text-center">
+                            <button class="btn btn-sm btn-light border p-1 px-2" onclick="viewDetails('${pno}')" title="View Details">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = html;
+            updateSelectedBadge();
+        }
+
+        function toggleSelectAll(checked) {
+            filteredBanking.forEach(p => {
+                const pno = p.payment_number;
+                if (checked) selectedVouchers.add(pno);
+                else selectedVouchers.delete(pno);
+            });
+            document.querySelectorAll('.row-chk').forEach(c => c.checked = checked);
+            updateSelectedBadge();
+        }
+
+        function toggleSelectVoucher(pno, checked) {
+            if (checked) selectedVouchers.add(pno);
+            else selectedVouchers.delete(pno);
+            updateSelectedBadge();
+        }
+
+        function updateSelectedBadge() {
+            const badge = document.getElementById('selectedCountBadge');
+            const countSpan = document.getElementById('selectedCount');
+            const btnCountSpan = document.getElementById('btnSelectCount');
+            const syncSelBtn = document.getElementById('syncSelectedBtn');
+            const cnt = selectedVouchers.size;
+            if (cnt > 0) {
+                if (badge) badge.style.display = 'inline-block';
+                if (countSpan) countSpan.textContent = cnt;
+                if (btnCountSpan) btnCountSpan.textContent = cnt;
+                if (syncSelBtn) syncSelBtn.disabled = false;
+            } else {
+                if (badge) badge.style.display = 'none';
+                if (btnCountSpan) btnCountSpan.textContent = '0';
+                if (syncSelBtn) syncSelBtn.disabled = true;
+            }
+        }
+
+        function viewDetails(pno) {
+            const p = allBanking.find(x => x.payment_number === pno);
+            if (!p) return;
+
+            const modalBody = document.getElementById('voucherModalBody');
+            const isSynced = p.zoho_status === 'synced' || p.zoho_payment_id;
+
+            let billsHtml = '<span class="text-muted">None</span>';
+            if (Array.isArray(p.bill_allocations) && p.bill_allocations.length) {
+                billsHtml = '<ul class="list-group list-group-flush mb-0">';
+                p.bill_allocations.forEach(b => {
+                    billsHtml += `<li class="list-group-item px-0 py-1 d-flex justify-content-between"><span>${b.name || b.bill_name || 'Bill'} (${b.billtype || 'Agst Ref'})</span><span class="fw-bold">${formatCurrency(b.amount)}</span></li>`;
+                });
+                billsHtml += '</ul>';
+            }
+
+            let entriesHtml = '<span class="text-muted">None</span>';
+            if (Array.isArray(p.ledger_entries) && p.ledger_entries.length) {
+                entriesHtml = '<ul class="list-group list-group-flush mb-0">';
+                p.ledger_entries.forEach(e => {
+                    entriesHtml += `<li class="list-group-item px-0 py-1 d-flex justify-content-between"><span>${e.ledger_name || e.name}</span><span class="fw-bold">${formatCurrency(e.amount)}</span></li>`;
+                });
+                entriesHtml += '</ul>';
+            }
+
+            modalBody.innerHTML = `
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="text-muted small">Voucher Number</label>
+                        <div class="fw-bold fs-6">${p.payment_number || '—'}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small">Date</label>
+                        <div class="fw-semibold">${formatDate(p.date)}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small">Account / Ledger</label>
+                        <div class="fw-bold text-primary">${p.vendor_name || '—'}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small">Parent Group</label>
+                        <div><span class="group-badge ${getGroupBadgeClass(p.ledger_parent)}">${p.ledger_parent || 'Banking'}</span></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small">Paid Through (Bank / Cash)</label>
+                        <div class="fw-semibold">${p.bank_account || '—'}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small">Total Amount</label>
+                        <div class="fw-bold text-success fs-5">${formatCurrency(p.amount)}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small">Reference Number</label>
+                        <div>${p.reference_number || '—'}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small">Zoho Status</label>
+                        <div>${isSynced ? '<span class="badge bg-success">Synced</span>' : '<span class="badge bg-warning">Pending</span>'}</div>
+                    </div>
+                    <div class="col-12">
+                        <label class="text-muted small">Narration</label>
+                        <div class="p-2 bg-light rounded border text-secondary" style="font-size: 13px;">${p.narration || 'No narration recorded.'}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small fw-semibold">Bill Allocations</label>
+                        <div class="p-2 bg-light rounded border">${billsHtml}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-muted small fw-semibold">Ledger Entries</label>
+                        <div class="p-2 bg-light rounded border">${entriesHtml}</div>
+                    </div>
+                </div>
+            `;
+            detailsModalInstance.show();
+        }
+
+        async function markSelectedStatus(status) {
+            if (!selectedVouchers.size) {
+                alert("Please select at least one voucher first.");
+                return;
+            }
+            if (!confirm(`Mark ${selectedVouchers.size} voucher(s) as ${status.toUpperCase()} in SQLite?`)) return;
+
+            try {
+                const res = await fetch('/api/banking/mark_synced', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        payment_numbers: Array.from(selectedVouchers),
+                        status: status
+                    })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    alert(`Updated ${data.count} vouchers successfully!`);
+                    await loadBankingData();
+                    selectedVouchers.clear();
+                    updateSelectedBadge();
+                } else {
+                    alert("Failed to update status: " + (data.error || 'Unknown error'));
+                }
+            } catch (err) {
+                alert("Error: " + err.message);
+            }
+        }
+
+        async function exportToExcel() {
+            try {
+                const res = await fetch('/api/banking/export_excel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ banking: filteredBanking })
+                });
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Banking_Transactions_${new Date().toISOString().slice(0, 10)}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                } else {
+                    alert("Export failed.");
+                }
+            } catch (err) {
+                alert("Export error: " + err.message);
+            }
+        }
+
+        // --- ZOHO SYNC & LIVE STREAMING CONSOLE ---
+        let bankingEventSource = null;
+        let currentBankingJobId = null;
+
+        function showBankingConsole(show) {
+            const el = document.getElementById('bankingConsoleCard');
+            if (el) el.style.display = show ? 'block' : 'none';
+        }
+
+        function clearBankingConsole() {
+            const consoleEl = document.getElementById('bankingConsole');
+            if (consoleEl) consoleEl.textContent = '';
+        }
+
+        function setBankingConsoleStatus(status, bgClass = 'bg-secondary') {
+            const statusEl = document.getElementById('bankingConsoleStatus');
+            if (statusEl) {
+                statusEl.textContent = status;
+                statusEl.className = `badge ${bgClass} ms-1`;
+            }
+        }
+
+        function appendBankingConsole(msg) {
+            const consoleEl = document.getElementById('bankingConsole');
+            if (consoleEl) {
+                consoleEl.textContent += msg + '\n';
+                consoleEl.scrollTop = consoleEl.scrollHeight;
+            }
+        }
+
+        function setSyncButtonsState(running) {
+            const stopBtn = document.getElementById('bankingStopBtn');
+            const syncSelBtn = document.getElementById('syncSelectedBtn');
+            const syncMonthBtn = document.getElementById('syncMonthBtn');
+            const syncAllBtn = document.getElementById('syncAllBtn');
+
+            if (stopBtn) stopBtn.disabled = !running;
+            if (syncSelBtn) syncSelBtn.disabled = running || selectedVouchers.size === 0;
+            if (syncMonthBtn) syncMonthBtn.disabled = running;
+            if (syncAllBtn) syncAllBtn.disabled = running;
+        }
+
+        async function stopBankingJob() {
+            if (!currentBankingJobId) return;
+            try {
+                await fetch(`/api/jobs/${currentBankingJobId}/stop`, { method: 'POST' });
+                appendBankingConsole('⏹️ Stop requested by user...');
+                setBankingConsoleStatus('Stopping...', 'bg-warning');
+            } catch (e) {
+                appendBankingConsole('Failed to request stop: ' + (e?.message || e));
+            }
+        }
+
+        async function startBankingJob(payload) {
+            if (bankingEventSource) {
+                try { bankingEventSource.close(); } catch (e) {}
+                bankingEventSource = null;
+            }
+
+            showBankingConsole(true);
+            clearBankingConsole();
+            setBankingConsoleStatus('Initializing...', 'bg-info');
+            setSyncButtonsState(true);
+
+            try {
+                const res = await fetch('/api/banking/sync/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.status !== 'success' || !data.job_id) {
+                    throw new Error(data.message || data.error || 'Failed to start banking sync job');
+                }
+
+                currentBankingJobId = data.job_id;
+                appendBankingConsole(`🚀 Job started (ID: ${currentBankingJobId})`);
+                setBankingConsoleStatus('Running...', 'bg-primary');
+
+                bankingEventSource = new EventSource(`/api/jobs/${currentBankingJobId}/stream`);
+
+                bankingEventSource.addEventListener('log', (e) => {
+                    try {
+                        const d = JSON.parse(e.data || '{}');
+                        if (d.message) appendBankingConsole(d.message);
+                    } catch (err) {
+                        appendBankingConsole(e.data);
+                    }
+                });
+
+                bankingEventSource.addEventListener('done', async (e) => {
+                    try {
+                        const d = JSON.parse(e.data || '{}');
+                        const resObj = d.result || {};
+                        const st = resObj.status || 'success';
+                        setBankingConsoleStatus(st === 'success' ? 'Completed' : st, st === 'success' ? 'bg-success' : 'bg-danger');
+                        appendBankingConsole(`\n🏁 Job finished: ${st.toUpperCase()}`);
+                    } catch (err) {}
+                    if (bankingEventSource) {
+                        try { bankingEventSource.close(); } catch (err) {}
+                        bankingEventSource = null;
+                    }
+                    setSyncButtonsState(false);
+                    await loadBankingData();
+                });
+
+                bankingEventSource.addEventListener('error', () => {
+                    if (bankingEventSource) {
+                        try { bankingEventSource.close(); } catch (err) {}
+                        bankingEventSource = null;
+                    }
+                    setBankingConsoleStatus('Disconnected', 'bg-warning');
+                    setSyncButtonsState(false);
+                });
+            } catch (err) {
+                appendBankingConsole(`❌ Error: ${err.message}`);
+                setBankingConsoleStatus('Error', 'bg-danger');
+                setSyncButtonsState(false);
+                alert(`Sync Error: ${err.message}`);
+            }
+        }
+
+        async function syncSelected() {
+            if (!selectedVouchers.size) {
+                alert("Please select at least one banking voucher to sync.");
+                return;
+            }
+            if (!confirm(`Sync ${selectedVouchers.size} selected voucher(s) as Bank Fund Transfers to Zoho Books?`)) {
+                return;
+            }
+            await startBankingJob({ payment_numbers: Array.from(selectedVouchers) });
+        }
+
+        async function syncFilteredMonth() {
+            if (!filteredBanking.length) {
+                alert("No banking vouchers visible in the current filter.");
+                return;
+            }
+            const pnos = filteredBanking.map(x => x.payment_number).filter(Boolean);
+            if (!confirm(`Sync ${pnos.length} banking voucher(s) from the current filtered list to Zoho Books?`)) {
+                return;
+            }
+            await startBankingJob({ payment_numbers: pnos });
+        }
+
+        async function syncAllBanking() {
+            if (!confirm("Sync ALL banking vouchers (transfer_fund) to Zoho Books?")) {
+                return;
+            }
+            await startBankingJob({});
+        }
+
+        async function downloadSyncErrorsExcel() {
+            try {
+                const res = await fetch('/api/banking/export_sync_errors_excel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    alert(err.error || "No sync errors found to export.");
+                    return;
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Banking_Sync_Errors_${new Date().toISOString().slice(0, 10)}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            } catch (err) {
+                alert("Download failed: " + err.message);
+            }
+        }
+    </script>
+</body>
+</html>

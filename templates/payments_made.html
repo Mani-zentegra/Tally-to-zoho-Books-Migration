@@ -194,10 +194,18 @@
                         <li class="nav-item" role="presentation">
                             <button class="nav-link fw-bold text-warning" id="expense-tab" data-bs-toggle="tab" data-bs-target="#expense-pane" type="button" role="tab" onclick="switchCategoryTab('expense')">Expenses (<span id="expenseCount">0</span>)</button>
                         </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link fw-bold text-info" id="banking-tab" data-bs-toggle="tab" data-bs-target="#banking-pane" type="button" role="tab" onclick="switchCategoryTab('banking')">Banking (<span id="bankingCount">0</span>)</button>
+                        </li>
                     </ul>
-                    <button onclick="splitExpenses()" id="splitBtn" class="btn btn-sm btn-outline-warning fw-semibold">
-                        <i class="bi bi-diagram-2 me-1"></i> Split Expenses Auto
-                    </button>
+                    <div class="d-flex align-items-center gap-2">
+                        <button onclick="splitExpenses()" id="splitBtn" class="btn btn-sm btn-outline-warning fw-semibold">
+                            <i class="bi bi-diagram-2 me-1"></i> Split Expenses & Banking Auto
+                        </button>
+                        <a href="/banking" class="btn btn-sm btn-outline-primary fw-semibold">
+                            <i class="bi bi-bank2 me-1"></i> Go to Banking Module
+                        </a>
+                    </div>
                 </div>
 
                 <!-- KPI Cards (4 Cards: Total, Amount, Synced, Pending) -->
@@ -569,6 +577,7 @@
         let filteredPayments = [];
         let vendorPayments = [];
         let expensePayments = [];
+        let bankingPayments = [];
         let activeTab = 'all';
         let activeMonth = 'ALL';
         let selectedYearFilter = 'ALL';
@@ -589,6 +598,7 @@
                     allPayments = data.payments || [];
                     vendorPayments = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'vendor' || (p.voucher_type || '').toLowerCase() === 'payment');
                     expensePayments = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'expense' || (p.voucher_type || '').toLowerCase() === 'expense');
+                    bankingPayments = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'banking' || (p.voucher_type || '').toLowerCase() === 'banking');
                     buildMonthPills();
                     updateTabCounts();
                     applyFilters();
@@ -754,13 +764,16 @@
             const allCount = allPayments.length;
             const vendorCount = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'vendor' || (p.voucher_type || '').toLowerCase() === 'payment').length;
             const expenseCount = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'expense' || (p.voucher_type || '').toLowerCase() === 'expense').length;
+            const bankingCount = allPayments.filter(p => (p.payment_category || '').toLowerCase() === 'banking' || (p.voucher_type || '').toLowerCase() === 'banking').length;
 
             const ac = document.getElementById('allCount');
             const vc = document.getElementById('vendorCount');
             const ec = document.getElementById('expenseCount');
+            const bc = document.getElementById('bankingCount');
             if (ac) ac.innerText = allCount;
             if (vc) vc.innerText = vendorCount;
             if (ec) ec.innerText = expenseCount;
+            if (bc) bc.innerText = bankingCount;
         }
 
         function applyFilters() {
@@ -774,6 +787,8 @@
                 list = list.filter(p => (p.payment_category || '').toLowerCase() === 'vendor' || (p.voucher_type || '').toLowerCase() === 'payment');
             } else if (activeTab === 'expense') {
                 list = list.filter(p => (p.payment_category || '').toLowerCase() === 'expense' || (p.voucher_type || '').toLowerCase() === 'expense');
+            } else if (activeTab === 'banking') {
+                list = list.filter(p => (p.payment_category || '').toLowerCase() === 'banking' || (p.voucher_type || '').toLowerCase() === 'banking');
             }
 
             // Month / Year Filter
@@ -1081,9 +1096,10 @@
                     }
                     vendorPayments = data.vendor_payments || [];
                     expensePayments = data.expenses || data.expense_payments || [];
+                    bankingPayments = data.banking || [];
                     updateTabCounts();
                     applyFilters();
-                    alert(`Splitting Complete & Saved to DB!\nVendor Payments: ${vendorPayments.length}\nDirect Expenses: ${expensePayments.length}`);
+                    alert(`Splitting Complete & Saved to DB!\nVendor Payments: ${vendorPayments.length}\nDirect Expenses: ${expensePayments.length}\nBanking: ${bankingPayments.length}`);
                 } else {
                     alert('Error splitting expenses: ' + (data.error || data.message || 'Unknown error'));
                 }
@@ -1091,7 +1107,7 @@
                 alert('Split failed: ' + e.message);
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-diagram-2 me-1"></i> Split Expenses Auto';
+                btn.innerHTML = '<i class="bi bi-diagram-2 me-1"></i> Split Expenses & Banking Auto';
             }
         }
 

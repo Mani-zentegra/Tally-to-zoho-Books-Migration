@@ -3,6 +3,7 @@ import os
 import time
 import sys
 import random
+import json
 from dotenv import load_dotenv
 
 # Explicitly load .env from the project root (one level up from modules/)
@@ -132,12 +133,14 @@ class ZohoConnector:
         if not cached_token and not force_refresh and os.path.exists(cache_file):
             try:
                 with open(cache_file, 'r', encoding='utf-8') as f:
-                    disk_cache = json.load(f)
-                    c_entry = disk_cache.get(str(current_org), {})
-                    if c_entry.get("token") and time.time() < c_entry.get("expiry", 0):
-                        self._tokens_cache[current_org] = c_entry
-                        cached_token = c_entry.get("token")
-                        cached_expiry = c_entry.get("expiry", 0)
+                    txt = f.read().strip()
+                    if txt:
+                        disk_cache = json.loads(txt)
+                        c_entry = disk_cache.get(str(current_org), {})
+                        if c_entry.get("token") and time.time() < c_entry.get("expiry", 0):
+                            self._tokens_cache[current_org] = c_entry
+                            cached_token = c_entry.get("token")
+                            cached_expiry = c_entry.get("expiry", 0)
             except Exception:
                 pass
 
@@ -166,13 +169,18 @@ class ZohoConnector:
                     try:
                         disk_cache = {}
                         if os.path.exists(cache_file):
-                            with open(cache_file, 'r', encoding='utf-8') as f:
-                                disk_cache = json.load(f)
+                            try:
+                                with open(cache_file, 'r', encoding='utf-8') as f:
+                                    txt = f.read().strip()
+                                    if txt:
+                                        disk_cache = json.loads(txt)
+                            except Exception:
+                                disk_cache = {}
                         disk_cache[str(current_org)] = entry
                         with open(cache_file, 'w', encoding='utf-8') as f:
                             json.dump(disk_cache, f)
-                    except Exception:
-                        pass
+                    except Exception as ce:
+                        print(f"Failed to write token cache: {ce}")
                     return token
                 else:
                     print(f" Token refresh failed for Org {current_org}: {data}")

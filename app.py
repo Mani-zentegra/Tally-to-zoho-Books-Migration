@@ -132,6 +132,13 @@ except Exception as e:
     debit_note_module = None
 
 try:
+    from modules import banking_backend as banking_module
+    print(" Successfully imported banking_backend")
+except Exception as e:
+    print(f" Error importing banking_backend: {e}")
+    banking_module = None
+
+try:
     import database_manager
     print(" Successfully imported database_manager")
 except ImportError as e:
@@ -4965,6 +4972,11 @@ def api_sync_purchase_orders():
 def payments_made_page():
     return render_template('payments_made.html')
 
+# Banking routes
+@app.route('/banking')
+def banking_page():
+    return render_template('banking.html')
+
 @app.route('/api/payments_made/fetch', methods=['POST'])
 def api_fetch_payments_made():
     try:
@@ -6567,6 +6579,318 @@ def api_db_payments_made():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/db/banking', methods=['GET'])
+def api_db_banking():
+    """Fetch banking transactions from SQLite database"""
+    try:
+        if not database_manager:
+            return jsonify({"error": "Database manager not available"}), 500
+        conn = database_manager.get_db_connection()
+        query = """
+            SELECT pm.*, l.parent AS ledger_parent
+            FROM payments_made pm
+            LEFT JOIN ledgers l ON LOWER(TRIM(pm.vendor_name)) = LOWER(TRIM(l.name)) COLLATE NOCASE
+            WHERE LOWER(IFNULL(pm.payment_category, '')) = 'banking'
+               OR (
+                   LOWER(IFNULL(pm.payment_category, '')) != 'vendor'
+                   AND LOWER(IFNULL(pm.payment_category, '')) != 'expense'
+                   AND LOWER(IFNULL(l.parent, '')) NOT LIKE '%expense%'
+                   AND LOWER(IFNULL(l.parent, '')) NOT LIKE '%creditor%'
+                   AND LOWER(IFNULL(l.type, '')) != 'vendor'
+               )
+            ORDER BY pm.date DESC
+        """
+        rows = conn.execute(query).fetchall()
+        conn.close()
+        
+        banking_list = []
+        for row in rows:
+            r = dict(row)
+            for field in ['bill_allocations', 'ledger_entries', 'cost_center_allocations']:
+                if r.get(field):
+                    try:
+                        if isinstance(r[field], str):
+                            r[field] = json.loads(r[field])
+                    except:
+                        r[field] = []
+                else:
+                    r[field] = []
+            banking_list.append(r)
+            
+        total_amount = sum(float(b.get('amount', 0) or 0) for b in banking_list)
+        return jsonify({
+            "status": "success",
+            "banking": banking_list,
+            "count": len(banking_list),
+            "total_amount": total_amount
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/banking/mark_synced', methods=['POST'])
+def api_banking_mark_synced():
+    """Mark banking transactions as Synced or Pending in SQLite DB."""
+    return api_payments_made_mark_synced()
+
+@app.route('/api/banking/export_excel', methods=['POST', 'GET'])
+def api_export_banking_excel():
+    try:
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from datetime import datetime
+
+        items = []
+        if request.is_json and request.json:
+            items = request.json.get("banking", [])
+
+        if not items and database_manager:
+            conn = database_manager.get_db_connection()
+            query = """
+                SELECT pm.*, l.parent AS ledger_parent
+                FROM payments_made pm
+                LEFT JOIN ledgers l ON LOWER(TRIM(pm.vendor_name)) = LOWER(TRIM(l.name)) COLLATE NOCASE
+                WHERE LOWER(IFNULL(pm.payment_category, '')) = 'banking'
+                   OR (
+                       LOWER(IFNULL(pm.payment_category, '')) != 'vendor'
+                       AND LOWER(IFNULL(pm.payment_category, '')) != 'expense'
+                       AND LOWER(IFNULL(l.parent, '')) NOT LIKE '%expense%'
+                       AND LOWER(IFNULL(l.parent, '')) NOT LIKE '%creditor%'
+                       AND LOWER(IFNULL(l.type, '')) != 'vendor'
+                   )
+                ORDER BY pm.date DESC
+            """
+            rows = conn.execute(query).fetchall()
+            conn.close()
+            items = [dict(r) for r in rows]
+
+        if not items:
+            return jsonify({"error": "No banking transactions available to export."}), 400
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Banking Transactions"
+        ws.views.sheetView[0].showGridLines = True
+
+        headers = ["Voucher #", "Date", "Account / Ledger", "Parent Group", "Paid Through", "Amount (₹)", "Reference #", "Zoho Status", "Narration"]
+        ws.append(headers)
+
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        thin_border = Border(
+            left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
+            top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
+        )
+
+        for row_idx, p in enumerate(items, 2):
+            raw_d = str(p.get("date") or "").replace("-", "").strip()
+            date_fmt = f"{raw_d[6:8]}/{raw_d[4:6]}/{raw_d[0:4]}" if len(raw_d) == 8 else raw_d
+            amt = float(p.get("amount") or 0.0)
+            
+            ws.append([
+                p.get("payment_number", ""),
+                date_fmt,
+                p.get("vendor_name", ""),
+                p.get("ledger_parent", ""),
+                p.get("bank_account", ""),
+                amt,
+                p.get("reference_number", ""),
+                p.get("zoho_status", "pending"),
+                p.get("narration", "")
+            ])
+
+            for col in range(1, len(headers) + 1):
+                c = ws.cell(row=row_idx, column=col)
+                c.border = thin_border
+                if col == 6:
+                    c.number_format = "₹#,##0.00"
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"Banking_Transactions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/banking/sync_zoho', methods=['POST'])
+def api_sync_banking():
+    try:
+        if not banking_module:
+            return jsonify({"status": "error", "message": "Banking backend not available"}), 500
+        selected = request.json.get("vouchers") or request.json.get("payments") if request.is_json else None
+        from_date = request.json.get("from_date") if request.is_json else None
+        to_date = request.json.get("to_date") if request.is_json else None
+        limit = request.json.get("limit") if request.is_json else None
+        company_name = request.json.get("company_name") if request.is_json else None
+        
+        result = banking_module.sync_banking_to_zoho(selected, from_date, to_date, limit, company_name)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/banking/sync/start', methods=['POST'])
+def api_banking_sync_start():
+    if not banking_module:
+        return jsonify({"status": "error", "message": "Banking backend not available"}), 500
+    if not job_manager:
+        return jsonify({"status": "error", "message": "Job manager not available"}), 500
+
+    body = request.get_json(force=True, silent=True) or {}
+    from_date = body.get("from_date")
+    to_date = body.get("to_date")
+    limit = body.get("limit")
+    company_name = body.get("company_name")
+    payment_numbers = body.get("payment_numbers") or body.get("vouchers")
+
+    job = job_manager.create("banking_zoho_sync")
+    job.log(f"Banking Zoho sync job started.")
+    if payment_numbers:
+        job.log(f"Targeting {len(payment_numbers)} selected banking voucher(s).")
+    
+    from modules import company_manager
+    from modules.zoho_connector import set_thread_company
+    active_cid = session.get('active_company_id') or company_manager.get_active_company_id()
+    active_comp = company_manager.get_active_company(active_cid)
+    job_db = session.get('active_db') or active_comp.get('db_name') or database_manager.get_default_db_name()
+    job.log(f"🔒 Thread locked to Company: '{active_comp.get('name')}' (Org ID: {active_comp.get('org_id')}, DB: {job_db})")
+
+    def _runner():
+        database_manager.set_active_db(job_db)
+        set_thread_company(active_comp)
+
+        try:
+            fn = getattr(banking_module, "sync_banking_to_zoho_job", None)
+            if not callable(fn):
+                raise RuntimeError("Banking Zoho sync function not available")
+            res = fn(from_date, to_date, limit, company_name, payment_numbers=payment_numbers, log=job.log, stop_event=job.stop_event)
+            st = (res or {}).get("status") or "success"
+            if st == "success":
+                job_manager.finish(job.id, "success", result=res)
+            elif st == "stopped":
+                job_manager.finish(job.id, "stopped", result=res, message="Stopped by user")
+            else:
+                job_manager.finish(job.id, "error", result=res, message=(res or {}).get("message", "Failed"))
+        except Exception as e:
+            job.log(f"Unhandled error: {e}")
+            job_manager.finish(job.id, "error", result={"status": "error", "message": str(e)}, message=str(e))
+
+    threading.Thread(target=_runner, daemon=True).start()
+    return jsonify({"status": "success", "job_id": job.id})
+
+@app.route('/api/banking/export_sync_errors_excel', methods=['POST', 'GET'])
+def api_export_banking_sync_errors_excel():
+    try:
+        import io
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        from datetime import datetime
+
+        errors = []
+        if request.is_json and request.json:
+            errors = request.json.get("errors", [])
+        
+        if not errors and database_manager:
+            conn = database_manager.get_db_connection()
+            query = """
+                SELECT payment_number, date, vendor_name, bank_account, amount, zoho_error 
+                FROM payments_made 
+                WHERE payment_category = 'banking' 
+                  AND (zoho_status = 'failed' OR zoho_error IS NOT NULL)
+            """
+            rows = conn.execute(query).fetchall()
+            conn.close()
+            for r in rows:
+                errors.append({
+                    "payment_number": r["payment_number"],
+                    "date": r["date"],
+                    "to_account": r["vendor_name"],
+                    "from_account": r["bank_account"],
+                    "amount": float(r["amount"] or 0),
+                    "error": r["zoho_error"] or "Sync Failed"
+                })
+
+        if not errors:
+            return jsonify({"error": "No banking sync errors found to export."}), 400
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Banking Sync Errors"
+        ws.views.sheetView[0].showGridLines = True
+
+        headers = ["Voucher #", "Date", "Paid From (Bank)", "Destination Account", "Amount (₹)", "Status", "Error Details", "Action Required"]
+        ws.append(headers)
+
+        header_fill = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        thin_border = Border(
+            left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
+            top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
+        )
+        fail_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+
+        for row_idx, err in enumerate(errors, 2):
+            pnum = str(err.get("payment_number") or "").strip()
+            raw_d = str(err.get("date") or "").replace("-", "").strip()
+            date_fmt = f"{raw_d[6:8]}/{raw_d[4:6]}/{raw_d[0:4]}" if len(raw_d) == 8 else raw_d
+            from_acc = str(err.get("from_account") or "").strip()
+            to_acc = str(err.get("to_account") or err.get("vendor") or "").strip()
+            amt = float(err.get("amount") or 0)
+            emsg = str(err.get("error") or "Sync Failed").strip()
+            action = "Ensure account exists in Zoho Chart of Accounts / Banking" if "not found" in emsg.lower() else "Check Zoho account settings"
+
+            ws.append([pnum, date_fmt, from_acc, to_acc, amt, "FAILED", emsg, action])
+            for col in range(1, 9):
+                c = ws.cell(row=row_idx, column=col)
+                c.fill = fail_fill
+                c.border = thin_border
+                if col == 5: c.number_format = "₹#,##0.00"
+                if col == 6: c.font = Font(bold=True, color="C00000")
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"Banking_Sync_Errors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/db/receipts', methods=['GET'])
 def api_db_receipts():
     """Fetch receipts from SQLite database"""
@@ -7324,35 +7648,116 @@ def split_payments_expenses():
         conn = database_manager.get_db_connection(write=True)
         cursor = conn.cursor()
         
-        # 1. Update Vendor Payments: vendor_name exists in ledgers with type='vendor' or parent contains 'creditor'
-        cursor.execute("""
-            UPDATE payments_made 
-            SET payment_category = 'vendor', voucher_type = 'Payment'
-            WHERE vendor_name IN (
-                SELECT pm.vendor_name FROM payments_made pm
-                INNER JOIN ledgers l ON LOWER(TRIM(pm.vendor_name)) = LOWER(TRIM(l.name)) COLLATE NOCASE
-                WHERE LOWER(l.type) = 'vendor' OR LOWER(IFNULL(l.parent, '')) LIKE '%creditor%'
+        # Build ledger hierarchy maps
+        cursor.execute("SELECT LOWER(TRIM(name)), LOWER(TRIM(IFNULL(parent, ''))), LOWER(TRIM(IFNULL(type, ''))) FROM ledgers")
+        ledger_map = {}
+        for name, parent, ltype in cursor.fetchall():
+            ledger_map[name] = {"parent": parent or "", "type": ltype or ""}
+
+        cursor.execute("SELECT LOWER(TRIM(name)), LOWER(TRIM(IFNULL(parent, ''))), LOWER(TRIM(IFNULL(primary_group, ''))) FROM groups")
+        group_map = {}
+        for gname, gparent, gprimary in cursor.fetchall():
+            group_map[gname] = {"parent": gparent or "", "primary": gprimary or ""}
+
+        def is_expense(ledger_name):
+            clean = str(ledger_name or "").lower().strip()
+            linfo = ledger_map.get(clean)
+            if not linfo:
+                return False
+            parent = linfo["parent"]
+            if "expense" in parent:
+                return True
+            cur = parent
+            visited = set()
+            while cur and cur not in visited:
+                visited.add(cur)
+                if "expense" in cur:
+                    return True
+                ginfo = group_map.get(cur)
+                if not ginfo:
+                    break
+                if "expense" in ginfo.get("primary", ""):
+                    return True
+                cur = ginfo.get("parent", "")
+            return False
+
+        def is_vendor(ledger_name):
+            clean = str(ledger_name or "").lower().strip()
+            linfo = ledger_map.get(clean)
+            if not linfo:
+                return False
+            if linfo.get("type") == "vendor":
+                return True
+            parent = linfo["parent"]
+            if "creditor" in parent:
+                return True
+            cur = parent
+            visited = set()
+            while cur and cur not in visited:
+                visited.add(cur)
+                if "creditor" in cur:
+                    return True
+                ginfo = group_map.get(cur)
+                if not ginfo:
+                    break
+                if "creditor" in ginfo.get("primary", ""):
+                    return True
+                cur = ginfo.get("parent", "")
+            return False
+
+        def categorize(name):
+            if is_vendor(name):
+                return "vendor"
+            if is_expense(name):
+                return "expense"
+            return "banking"
+
+        cursor.execute("SELECT DISTINCT vendor_name FROM payments_made WHERE vendor_name IS NOT NULL AND vendor_name != ''")
+        distinct_vendors = [r[0] for r in cursor.fetchall()]
+
+        vendor_names = []
+        expense_names = []
+        banking_names = []
+
+        for vname in distinct_vendors:
+            cat = categorize(vname)
+            if cat == "vendor":
+                vendor_names.append(vname)
+            elif cat == "expense":
+                expense_names.append(vname)
+            else:
+                banking_names.append(vname)
+
+        if vendor_names:
+            cursor.executemany(
+                "UPDATE payments_made SET payment_category = 'vendor', voucher_type = 'Payment' WHERE vendor_name = ?",
+                [(vn,) for vn in vendor_names]
             )
-        """)
-        vendor_updated = cursor.rowcount
+        if expense_names:
+            cursor.executemany(
+                "UPDATE payments_made SET payment_category = 'expense', voucher_type = 'Expense' WHERE vendor_name = ?",
+                [(en,) for en in expense_names]
+            )
+        if banking_names:
+            cursor.executemany(
+                "UPDATE payments_made SET payment_category = 'banking', voucher_type = 'Banking' WHERE vendor_name = ?",
+                [(bn,) for bn in banking_names]
+            )
 
-        # 2. Update Expenses: all others
-        cursor.execute("""
-            UPDATE payments_made 
-            SET payment_category = 'expense', voucher_type = 'Expense'
-            WHERE payment_category != 'vendor' OR payment_category IS NULL OR payment_category = ''
-        """)
-        expense_updated = cursor.rowcount
+        cursor.execute("UPDATE payments_made SET payment_category = 'banking', voucher_type = 'Banking' WHERE vendor_name IS NULL OR vendor_name = ''")
         conn.commit()
-        print(f" DB Update: {vendor_updated} vendor payments, {expense_updated} expenses")
 
-        # 3. Re-read directly from DB after update - DB is the truth source
+        # Re-read directly from DB after update - DB is the truth source
         all_updated = cursor.execute(
-            "SELECT * FROM payments_made ORDER BY date DESC"
+            """SELECT pm.*, l.parent AS ledger_parent 
+               FROM payments_made pm 
+               LEFT JOIN ledgers l ON LOWER(TRIM(pm.vendor_name)) = LOWER(TRIM(l.name)) COLLATE NOCASE
+               ORDER BY pm.date DESC"""
         ).fetchall()
         
         vendor_payments = []
         expenses = []
+        banking_payments = []
         all_payments_list = []
         for row in all_updated:
             r = dict(row)
@@ -7367,12 +7772,13 @@ def split_payments_expenses():
                     r[field] = []
                     
             cat = (r.get('payment_category') or '').lower()
-            if cat == 'vendor' or (not cat and r.get('voucher_type', '').lower() == 'payment'):
-                r['payment_category'] = 'vendor'
+            if cat == 'vendor':
                 vendor_payments.append(r)
-            else:
-                r['payment_category'] = 'expense'
+            elif cat == 'expense':
                 expenses.append(r)
+            else:
+                r['payment_category'] = 'banking'
+                banking_payments.append(r)
             all_payments_list.append(r)
                 
         conn.close()
@@ -7381,7 +7787,14 @@ def split_payments_expenses():
             "payments": all_payments_list,
             "vendor_payments": vendor_payments,
             "expenses": expenses,
-            "message": f"Split complete: {len(vendor_payments)} vendor payments, {len(expenses)} expenses"
+            "banking": banking_payments,
+            "counts": {
+                "total": len(all_payments_list),
+                "vendor": len(vendor_payments),
+                "expense": len(expenses),
+                "banking": len(banking_payments)
+            },
+            "message": f"Split complete: {len(vendor_payments)} vendor payments, {len(expenses)} expenses, {len(banking_payments)} banking"
         })
     except Exception as e:
         import traceback

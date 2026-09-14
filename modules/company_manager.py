@@ -91,6 +91,12 @@ def get_active_company(company_id: str = None) -> dict:
     cid = company_id or get_active_company_id()
     if cid in companies:
         return companies[cid]
+    for c in companies.values():
+        if str(c.get("org_id")) == str(cid) or str(c.get("id")) == str(cid):
+            return c
+    active_cid = get_active_company_id()
+    if active_cid in companies:
+        return companies[active_cid]
     # Fallback to first company
     if companies:
         first_key = next(iter(companies))

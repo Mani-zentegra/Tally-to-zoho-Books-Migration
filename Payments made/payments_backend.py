@@ -986,6 +986,7 @@ def sync_payments_to_zoho(selected_payments=None, from_date="20250401", to_date=
     coa_map = get_zoho_chart_of_accounts(token)
     
     results = {"total": len(payments), "success": 0, "failed": 0, "errors": [], "synced_items": []}
+    banking_account_map = None
      
     for payment in payments:
         raw_v = str(payment.get("vendor_name") or "").strip()
@@ -998,8 +999,25 @@ def sync_payments_to_zoho(selected_payments=None, from_date="20250401", to_date=
             if matches:
                 vendor_info = vendor_map[matches[0]]
 
-        # Check if vendor_name exists in vendor_map
-        if vendor_info:
+        cat = str(payment.get("payment_category") or payment.get("voucher_type") or "").lower().strip()
+        created_tx_id = "SYNCED"
+
+        # 1. Non-expense Account-to-Account Transfer (Banking: Credit Cards, Duties, Provisions, Capital, Loans)
+        if cat == "banking":
+            try:
+                from modules.banking_backend import get_all_zoho_accounts_map, create_zoho_banking_transfer
+                if banking_account_map is None:
+                    banking_account_map = get_all_zoho_accounts_map()
+                ok_bank, tx_id, err_bank = create_zoho_banking_transfer(payment, banking_account_map)
+                success = ok_bank
+                error = None if ok_bank else err_bank
+                if tx_id:
+                    created_tx_id = str(tx_id)
+            except Exception as be:
+                success = False
+                error = f"Banking transfer error: {be}"
+        # 2. Check if vendor_name exists in vendor_map
+        elif vendor_info:
             vendor_id = vendor_info["vendor_id"]
             bill_map = get_zoho_bills(vendor_id, token)
             success, error = create_zoho_payment_made(payment, vendor_map, bill_map, bank_account_map, token)
@@ -1019,7 +1037,7 @@ def sync_payments_to_zoho(selected_payments=None, from_date="20250401", to_date=
                     database_manager.update_payment_made_status(
                         payment.get("payment_number"),
                         payment.get("date"),
-                        zoho_payment_id="SYNCED",
+                        zoho_payment_id=created_tx_id,
                         zoho_status="synced",
                         zoho_error=""
                     )
@@ -1326,6 +1344,29 @@ def sync_payments_to_zoho_job(from_date="20250401", to_date="20250430", limit=No
         payment_no = p.get("payment_number") or ""
         payment_date_iso = _tally_to_iso(p.get("date") or "")
         vendor_name = (p.get("vendor_name") or "").strip()
+
+        cat = str(p.get("payment_category") or p.get("voucher_type") or "").lower().strip()
+        if cat == "banking":
+            try:
+                from modules.banking_backend import get_all_zoho_accounts_map, create_zoho_banking_transfer
+                if 'banking_job_account_map' not in locals() or banking_job_account_map is None:
+                    banking_job_account_map = get_all_zoho_accounts_map()
+                ok_bank, tx_id, err_bank = create_zoho_banking_transfer(p, banking_job_account_map)
+                if ok_bank:
+                    stats["payments_created"] += 1
+                    if database_manager:
+                        database_manager.update_payment_made_status(payment_no, p.get("date"), zoho_payment_id=str(tx_id or "SYNCED"), zoho_status="synced", zoho_error="")
+                    _emit(f"[{idx}/{stats['total']}] Bank Transfer #{payment_no} synced -> Zoho ID: {tx_id}")
+                else:
+                    stats["failed"] += 1
+                    errors.append({"payment_number": payment_no, "error": err_bank})
+                    _emit(f"[{idx}/{stats['total']}] Bank Transfer #{payment_no} failed: {err_bank}")
+            except Exception as be:
+                stats["failed"] += 1
+                errors.append({"payment_number": payment_no, "error": str(be)})
+                _emit(f"[{idx}/{stats['total']}] Bank Transfer #{payment_no} error: {be}")
+            continue
+
         vendor_id = _get_vendor_id(vendor_name)
         if not vendor_id:
             stats["failed"] += 1
